@@ -26,10 +26,10 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { adminDb } from '../lib/firebaseAdmin';
-import { verifyToken, AuthError } from '../lib/verifyToken';
+import { adminDb } from './_lib/firebaseAdmin';
+import { verifyToken, AuthError } from './_lib/verifyToken';
 import { FieldValue } from 'firebase-admin/firestore';
-import { runPipeline, ExtractedTask, FileType } from '../services/aiPipeline';
+import { runPipeline, ExtractedTask, FileType } from './_lib/aiPipeline';
 
 // ============================================
 // TYPE DEFINITIONS

@@ -27,8 +27,8 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { adminDb } from '../lib/firebaseAdmin';
-import { verifyToken, AuthError } from '../lib/verifyToken';
+import { adminDb } from './_lib/firebaseAdmin';
+import { verifyToken, AuthError } from './_lib/verifyToken';
 import { FieldValue } from 'firebase-admin/firestore';
 
 // ============================================
@@ -206,7 +206,7 @@ export default async function handler(
     console.log('📁 [Orchestrator] Meeting title:', meetingTitle);
     
     // Import and run pipeline
-    const { runPipeline } = await import('../services/aiPipeline');
+    const { runPipeline } = await import('./_lib/aiPipeline');
     
     try {
       const pipelineResult = await runPipeline(fileUrl, fileType, meetingTitle);

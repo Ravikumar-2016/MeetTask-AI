@@ -34,7 +34,7 @@ export default async function handler(
   // Check Firebase Admin
   let firebaseStatus = 'unknown';
   try {
-    const { adminDb } = await import('../lib/firebaseAdmin');
+    const { adminDb } = await import('./_lib/firebaseAdmin');
     // Try a simple operation
     await adminDb.collection('_health_check').doc('test').get();
     firebaseStatus = 'connected';
