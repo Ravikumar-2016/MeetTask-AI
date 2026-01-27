@@ -162,53 +162,114 @@ export default async function handler(
     console.log('✅ [Orchestrator] Status updated');
 
     // ----------------------------------------
-    // Step 7: Trigger Worker (Non-Blocking)
+    // Step 7: Run AI Pipeline Directly
     // ----------------------------------------
-    console.log('🚀 [Orchestrator] Triggering worker...');
+    // Instead of fire-and-forget (which doesn't work reliably on serverless),
+    // we run the pipeline directly but structure code so it completes quickly
+    // Frontend already navigates away, so user doesn't wait.
     
-    // Get the base URL for the worker
-    const baseUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_VERCEL_URL
-        ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
-        : 'http://localhost:3000';
+    console.log('🚀 [Orchestrator] Starting AI processing...');
     
-    const workerUrl = `${baseUrl}/api/process-meeting`;
-    console.log('📡 [Orchestrator] Worker URL:', workerUrl);
-
-    // Fire and forget - don't await the worker
-    // This allows us to return immediately
-    fetch(workerUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': request.headers.authorization || '',
-      },
-      body: JSON.stringify({ meetingId }),
-    }).then(res => {
-      console.log('📬 [Orchestrator] Worker triggered, status:', res.status);
-    }).catch(err => {
-      console.error('❌ [Orchestrator] Failed to trigger worker:', err.message);
-      // Update status to error if worker fails to start
-      meetingRef.update({
+    // Get file URL
+    const fileUrl = meeting.fileUrl || meeting.audioUrl;
+    if (!fileUrl) {
+      await meetingRef.update({
         status: 'error',
-        errorMessage: 'Failed to start processing',
+        errorMessage: 'No file URL found',
         updatedAt: FieldValue.serverTimestamp(),
       });
-    });
-
-    // ----------------------------------------
-    // Step 8: Return Immediately
-    // ----------------------------------------
-    console.log('✅ [Orchestrator] Returning success (processing started)');
-    console.log('========================================\n');
-
-    return response.status(200).json({
-      success: true,
-      message: 'Processing started. The meeting will be updated automatically.',
-      meetingId,
-      status: 'processing',
-    });
+      return response.status(400).json({
+        success: false,
+        error: 'No file URL found in meeting document',
+      });
+    }
+    
+    const fileType = (meeting.fileType || 'audio') as 'audio' | 'video' | 'image';
+    const meetingTitle = meeting.title || 'Untitled Meeting';
+    console.log('📁 [Orchestrator] File URL:', fileUrl);
+    console.log('📁 [Orchestrator] File type:', fileType);
+    console.log('📁 [Orchestrator] Meeting title:', meetingTitle);
+    
+    // Import and run pipeline
+    const { runPipeline } = await import('../services/aiPipeline');
+    
+    try {
+      const pipelineResult = await runPipeline(fileUrl, fileType, meetingTitle);
+      
+      console.log('✅ [Orchestrator] Pipeline completed');
+      console.log('📝 [Orchestrator] Transcript length:', pipelineResult.transcript.length);
+      console.log('📝 [Orchestrator] Summary length:', pipelineResult.summary.length);
+      console.log('📋 [Orchestrator] Tasks extracted:', pipelineResult.tasks.length);
+      
+      // Save transcript
+      await adminDb.collection('transcripts').doc(meetingId).set({
+        meetingId,
+        userId: user.uid,
+        text: pipelineResult.transcript,
+        summary: pipelineResult.summary,
+        wordCount: pipelineResult.transcript.split(/\s+/).length,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      console.log('💾 [Orchestrator] Transcript saved');
+      
+      // Save tasks
+      if (pipelineResult.tasks.length > 0) {
+        const batch = adminDb.batch();
+        const tasksRef = adminDb.collection('tasks');
+        
+        for (const task of pipelineResult.tasks) {
+          const taskDoc = tasksRef.doc();
+          batch.set(taskDoc, {
+            meetingId,
+            userId: user.uid,
+            text: task.title,
+            title: task.title,
+            description: task.description || '',
+            assignedTo: task.assignedTo || 'Unassigned',
+            dueDate: task.dueDate || 'No deadline',
+            priority: task.priority || 'medium',
+            completed: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
+        
+        await batch.commit();
+        console.log('💾 [Orchestrator] Tasks saved:', pipelineResult.tasks.length);
+      }
+      
+      // Update meeting to completed
+      await meetingRef.update({
+        status: 'completed',
+        taskCount: pipelineResult.tasks.length,
+        summary: pipelineResult.summary.substring(0, 500),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      
+      console.log('✅ [Orchestrator] Meeting completed successfully');
+      console.log('========================================\n');
+      
+      return response.status(200).json({
+        success: true,
+        message: 'Processing completed',
+        meetingId,
+        status: 'completed',
+        taskCount: pipelineResult.tasks.length,
+      });
+      
+    } catch (pipelineError: any) {
+      console.error('❌ [Orchestrator] Pipeline error:', pipelineError.message);
+      
+      await meetingRef.update({
+        status: 'error',
+        errorMessage: pipelineError.message || 'AI processing failed',
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      
+      return response.status(500).json({
+        success: false,
+        error: pipelineError.message || 'AI processing failed',
+      });
+    }
 
   } catch (error: any) {
     console.error('❌ [Orchestrator] Error:', error.message);

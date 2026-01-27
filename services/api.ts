@@ -40,14 +40,14 @@ export const processMeeting = async (meetingId: string): Promise<{ success: bool
   try {
     const token = await getAuthToken();
     
-    // Call orchestrator (returns immediately, processing happens in background)
+    // Call orchestrator - now processes directly (may take up to 5 min for long videos)
     const response = await api.post('/orchestrator', 
       { meetingId },
       {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
-        timeout: 30000, // 30 seconds is enough since orchestrator returns immediately
+        timeout: 300000, // 5 minutes for full AI processing
       }
     );
     
