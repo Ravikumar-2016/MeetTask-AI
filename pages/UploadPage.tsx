@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { processMeeting } from '../services/api';
 
 // ============================================
 // CLOUDINARY CONFIGURATION
@@ -195,6 +196,29 @@ const UploadPage: React.FC = () => {
       console.log('[Upload] Complete! Meeting ID:', meetingId);
       setProgress(100);
       setSuccess(true);
+
+      // Step 6: Trigger AI pipeline for audio/video files
+      // Images are already marked as 'completed' - no processing needed
+      if (fileType !== 'image') {
+        console.log('[Upload] Triggering AI pipeline for audio/video...');
+        
+        // Don't await - let it process in background
+        // The UI will update automatically via Firestore real-time listeners
+        processMeeting(meetingId)
+          .then((result) => {
+            if (result.success) {
+              console.log('[Upload] AI pipeline completed successfully');
+            } else {
+              console.error('[Upload] AI pipeline failed:', result.error);
+            }
+          })
+          .catch((err) => {
+            console.error('[Upload] AI pipeline error:', err);
+          });
+      } else {
+        console.log('[Upload] Image file - skipping AI pipeline');
+      }
+
       setUploading(false);
 
       // Redirect after showing success message

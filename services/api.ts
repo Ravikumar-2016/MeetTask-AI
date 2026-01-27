@@ -1,7 +1,8 @@
 
 import axios from 'axios';
+import { auth } from '../lib/firebase';
 
-// Replace with your actual backend URL in production
+// API base URL - uses Vercel serverless functions
 const API_BASE_URL = '/api';
 
 const api = axios.create({
@@ -10,6 +11,52 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+/**
+ * Get Firebase ID token for authenticated requests
+ */
+async function getAuthToken(): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('User not authenticated');
+  }
+  return user.getIdToken();
+}
+
+/**
+ * Process a meeting through the AI pipeline
+ * 
+ * This triggers:
+ * 1. Transcription with Gemini (for audio/video)
+ * 2. Extraction with OpenAI (summary + tasks)
+ * 3. Saves results to Firestore
+ * 
+ * @param meetingId - The Firestore document ID of the meeting
+ * @returns Promise with processing result
+ */
+export const processMeeting = async (meetingId: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+  try {
+    const token = await getAuthToken();
+    
+    const response = await api.post('/process-meeting', 
+      { meetingId },
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        timeout: 120000, // 2 minute timeout for long transcriptions
+      }
+    );
+    
+    return response.data;
+  } catch (error: any) {
+    console.error('[API] Process meeting error:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.error || error.message || 'Processing failed',
+    };
+  }
+};
 
 export const uploadMeeting = async (file: File, title: string, onProgress?: (p: number) => void) => {
   const formData = new FormData();
