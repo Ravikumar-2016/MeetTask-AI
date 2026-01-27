@@ -8,6 +8,30 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+
+// Initialize Firebase Admin inline
+function getAdminDb() {
+  if (getApps().length === 0) {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!projectId || !clientEmail || !privateKey) {
+      throw new Error('Missing Firebase Admin credentials');
+    }
+
+    initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, '\n'),
+      }),
+    });
+  }
+  return getFirestore();
+}
 
 export default async function handler(
   request: VercelRequest,
@@ -34,9 +58,8 @@ export default async function handler(
   // Check Firebase Admin
   let firebaseStatus = 'unknown';
   try {
-    const { adminDb } = await import('./_lib/firebaseAdmin');
-    // Try a simple operation
-    await adminDb.collection('_health_check').doc('test').get();
+    const db = getAdminDb();
+    await db.collection('_health_check').doc('test').get();
     firebaseStatus = 'connected';
   } catch (error: any) {
     firebaseStatus = `error: ${error.message}`;
