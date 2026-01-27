@@ -101,6 +101,23 @@ interface PipelineResult {
 type FileType = 'audio' | 'video' | 'image';
 
 // ============================================
+// INLINE: Helper to download file and convert to base64
+// ============================================
+
+async function downloadAsBase64(url: string): Promise<string> {
+  console.log('📥 [Pipeline] Downloading file...');
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download file: ${response.status}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const base64 = buffer.toString('base64');
+  console.log('✅ [Pipeline] Downloaded, size:', Math.round(buffer.length / 1024), 'KB');
+  return base64;
+}
+
+// ============================================
 // INLINE: AI Pipeline Functions
 // ============================================
 
@@ -121,7 +138,7 @@ function getMimeType(url: string, fileType: FileType): string {
     'ogg': 'audio/ogg', 'flac': 'audio/flac',
   };
   
-  return mediaMimes[extension || ''] || 'audio/mpeg';
+  return mediaMimes[extension || ''] || 'video/mp4';
 }
 
 async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ text: string; wordCount: number }> {
@@ -130,6 +147,11 @@ async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ 
 
   console.log('🎤 [Pipeline] Transcribing media...');
 
+  // Download file and convert to base64
+  const base64Data = await downloadAsBase64(mediaUrl);
+  const mimeType = getMimeType(mediaUrl, fileType);
+
+  // Use gemini-1.5-flash with inline base64 data
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
   const res = await fetch(endpoint, {
@@ -138,8 +160,13 @@ async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ 
     body: JSON.stringify({
       contents: [{
         parts: [
-          { text: `Transcribe this ${fileType} file accurately. Output the full verbatim transcript.` },
-          { fileData: { mimeType: getMimeType(mediaUrl, fileType), fileUri: mediaUrl } }
+          { text: `Transcribe this ${fileType} file accurately. Output the full verbatim transcript. Include all spoken words.` },
+          { 
+            inlineData: { 
+              mimeType: mimeType,
+              data: base64Data
+            } 
+          }
         ]
       }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
@@ -154,6 +181,10 @@ async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ 
   const result = await res.json();
   const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
   
+  if (!text) {
+    throw new Error('Gemini returned empty transcript');
+  }
+  
   console.log('✅ [Pipeline] Transcription done:', text.length, 'chars');
   return { text, wordCount: text.split(/\s+/).length };
 }
@@ -164,6 +195,10 @@ async function extractTextFromImage(imageUrl: string): Promise<{ text: string; w
 
   console.log('🖼️ [Pipeline] Extracting text from image...');
 
+  // Download image and convert to base64
+  const base64Data = await downloadAsBase64(imageUrl);
+  const mimeType = getMimeType(imageUrl, 'image');
+
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
   const res = await fetch(endpoint, {
@@ -173,14 +208,22 @@ async function extractTextFromImage(imageUrl: string): Promise<{ text: string; w
       contents: [{
         parts: [
           { text: 'Extract all text and describe any diagrams, action items, or tasks visible in this image.' },
-          { fileData: { mimeType: getMimeType(imageUrl, 'image'), fileUri: imageUrl } }
+          { 
+            inlineData: { 
+              mimeType: mimeType,
+              data: base64Data
+            } 
+          }
         ]
       }],
       generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
     }),
   });
 
-  if (!res.ok) throw new Error(`Gemini vision error: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini vision error: ${res.status} - ${errText}`);
+  }
 
   const result = await res.json();
   const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
