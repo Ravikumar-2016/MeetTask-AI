@@ -36,7 +36,7 @@ const formatDate = (timestamp: Timestamp | string | undefined): string => {
 
 const MeetingDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'tasks' | 'transcript'>('tasks');
   
@@ -49,14 +49,29 @@ const MeetingDetailsPage: React.FC = () => {
 
   // Fetch meeting details
   useEffect(() => {
+    // ============================================
+    // CRITICAL: Wait for auth to finish loading
+    // On page reload, Firebase restores auth session asynchronously.
+    // We MUST wait for this to complete before querying Firestore.
+    // ============================================
+    if (authLoading) {
+      console.log('[MeetingDetails] Auth loading, waiting...');
+      setLoading(true);
+      return;
+    }
+
     if (!id || !user?.uid) {
+      console.log('[MeetingDetails] No id or user, showing error');
       setLoading(false);
+      if (!user?.uid) {
+        setError('Please sign in to view this meeting');
+      }
       return;
     }
 
     const fetchMeeting = async () => {
       try {
-        console.log('[MeetingDetails] Fetching meeting:', id);
+        console.log('[MeetingDetails] Auth ready, fetching meeting:', id);
         
         // Get meeting document
         const meetingRef = doc(db, 'meetings', id);
@@ -102,11 +117,11 @@ const MeetingDetailsPage: React.FC = () => {
     };
 
     fetchMeeting();
-  }, [id, user?.uid]);
+  }, [id, user?.uid, authLoading]);
 
-  // Fetch transcript
+  // Fetch transcript - only after auth is ready
   useEffect(() => {
-    if (!id || !user?.uid) return;
+    if (authLoading || !id || !user?.uid) return;
 
     const fetchTranscript = async () => {
       try {
@@ -125,11 +140,11 @@ const MeetingDetailsPage: React.FC = () => {
     };
 
     fetchTranscript();
-  }, [id, user?.uid]);
+  }, [id, user?.uid, authLoading]);
 
-  // Real-time listener for tasks
+  // Real-time listener for tasks - only after auth is ready
   useEffect(() => {
-    if (!id || !user?.uid) return;
+    if (authLoading || !id || !user?.uid) return;
 
     console.log('[MeetingDetails] Setting up tasks listener for meeting:', id);
 
@@ -168,7 +183,7 @@ const MeetingDetailsPage: React.FC = () => {
     );
 
     return () => unsubscribe();
-  }, [id, user?.uid]);
+  }, [id, user?.uid, authLoading]);
 
   // Loading state
   if (loading) {

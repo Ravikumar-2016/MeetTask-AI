@@ -265,18 +265,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Listen for auth state changes
+   * 
+   * CRITICAL: On page reload, Firebase Auth restores the session from localStorage.
+   * This happens asynchronously, so `loading` stays true until onAuthStateChanged fires.
+   * All Firestore queries MUST wait for `loading === false` before executing.
    */
   useEffect(() => {
     console.log('🔍 Setting up auth listener...');
     
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        console.log('👤 User signed in:', firebaseUser.email);
+        console.log('👤 Auth state changed: User signed in:', firebaseUser.email);
         setUser(mapFirebaseUser(firebaseUser));
       } else {
-        console.log('👤 No user signed in');
+        console.log('👤 Auth state changed: No user signed in');
         setUser(null);
       }
+      // CRITICAL: Set loading to false AFTER user state is set
+      // This ensures queries don't run until we know the auth state
+      console.log('✅ Auth loading complete');
       setLoading(false);
     });
 

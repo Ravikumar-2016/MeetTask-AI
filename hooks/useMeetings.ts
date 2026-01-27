@@ -10,12 +10,11 @@
  * - Debug logging
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   collection, 
   query, 
   where, 
-  orderBy, 
   onSnapshot,
   Timestamp,
   FirestoreError
@@ -60,6 +59,10 @@ const formatDate = (timestamp: Timestamp | string | undefined): string => {
  * 
  * IMPORTANT: This hook ALWAYS includes where('userId', '==', uid) filter
  * to comply with Firestore security rules. Never query meetings without this filter.
+ * 
+ * CRITICAL: Waits for Firebase Auth to restore session before querying.
+ * On page reload, Firebase Auth takes time to restore the session from localStorage.
+ * Querying Firestore before auth is ready will result in permission errors.
  */
 export const useMeetings = (): UseMeetingsReturn => {
   const { user, loading: authLoading } = useAuth();
@@ -67,18 +70,30 @@ export const useMeetings = (): UseMeetingsReturn => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>('loading');
+  
+  // Track if we've received first snapshot to avoid showing errors during initial load
+  const hasReceivedData = useRef(false);
 
   useEffect(() => {
-    // Wait for auth to finish loading
+    console.log('[useMeetings] Effect running - authLoading:', authLoading, 'user:', user?.uid || 'null');
+    
+    // ============================================
+    // CRITICAL: Wait for auth to finish loading
+    // On page reload, Firebase restores auth session asynchronously.
+    // We MUST wait for this to complete before querying Firestore.
+    // ============================================
     if (authLoading) {
-      console.log('[useMeetings] Waiting for auth...');
+      console.log('[useMeetings] Auth still loading, keeping loading state...');
+      // Keep loading state while auth is restoring - DO NOT query Firestore yet
+      setLoading(true);
       setState('loading');
-      return;
+      setError(null); // Clear any previous errors while waiting
+      return; // Exit early - no cleanup needed, no subscription created
     }
 
-    // No user = empty state (not an error)
+    // No user after auth finished = show empty state (not an error)
     if (!user?.uid) {
-      console.log('[useMeetings] No authenticated user, showing empty state');
+      console.log('[useMeetings] Auth finished but no user - showing empty state');
       setMeetings([]);
       setLoading(false);
       setError(null);
@@ -86,26 +101,33 @@ export const useMeetings = (): UseMeetingsReturn => {
       return;
     }
 
-    console.log('[useMeetings] Setting up listener for user:', user.uid);
+    // ============================================
+    // Auth is complete AND we have a user - safe to query Firestore
+    // ============================================
+    console.log('[useMeetings] Auth ready with user:', user.uid, '- setting up Firestore listener');
     setLoading(true);
     setError(null);
     setState('loading');
+    hasReceivedData.current = false;
 
     // ============================================
     // CRITICAL: Query MUST include userId filter
     // Firestore rules require: where('userId', '==', auth.uid)
     // Never query meetings collection without this filter!
+    // 
+    // NOTE: We only use 'where' without 'orderBy' to avoid requiring
+    // a composite index. We sort the results in JavaScript instead.
     // ============================================
     const meetingsQuery = query(
       collection(db, 'meetings'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', user.uid)
     );
 
     // Subscribe to real-time updates
     const unsubscribe = onSnapshot(
       meetingsQuery,
       (snapshot) => {
+        hasReceivedData.current = true;
         const meetingsData: Meeting[] = [];
         
         snapshot.forEach((doc) => {
@@ -123,7 +145,15 @@ export const useMeetings = (): UseMeetingsReturn => {
           });
         });
 
-        console.log('[useMeetings] Received update:', meetingsData.length, 'meetings');
+        // Sort by createdAt descending (newest first) in JavaScript
+        // This avoids requiring a composite Firestore index
+        meetingsData.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+
+        console.log('[useMeetings] Received snapshot:', meetingsData.length, 'meetings');
         setMeetings(meetingsData);
         setLoading(false);
         setError(null);
@@ -131,13 +161,14 @@ export const useMeetings = (): UseMeetingsReturn => {
         setState(meetingsData.length > 0 ? 'success' : 'empty');
       },
       (err: FirestoreError) => {
-        console.error('[useMeetings] Firestore error:', err.code, err.message);
+        console.error('[useMeetings] Firestore error - Code:', err.code);
+        console.error('[useMeetings] Firestore error - Message:', err.message);
+        console.error('[useMeetings] Firestore error - Full:', err);
         
-        // Handle different error types appropriately
+        // Handle permission-denied as empty state (not an error)
+        // This happens when user has no documents or rules deny access
         if (err.code === 'permission-denied') {
-          // Permission denied usually means no data for this user
-          // Treat as empty state, not error (user just has no meetings)
-          console.log('[useMeetings] Permission denied - treating as empty state');
+          console.log('[useMeetings] Permission denied - treating as empty state (this is normal for new users)');
           setMeetings([]);
           setLoading(false);
           setError(null);
@@ -145,16 +176,31 @@ export const useMeetings = (): UseMeetingsReturn => {
           return;
         }
         
-        // Only show error for real failures (network, unknown errors)
-        let errorMessage = 'Failed to load meetings. Please try again.';
-        if (err.code === 'unavailable') {
-          errorMessage = 'Service unavailable. Please check your connection.';
-        } else if (err.code === 'cancelled') {
-          // Query was cancelled, likely due to component unmount - not an error
+        // Query was cancelled, likely due to component unmount - ignore
+        if (err.code === 'cancelled') {
+          console.log('[useMeetings] Query cancelled (unmount) - ignoring');
           return;
         }
         
+        // Check for missing index error
+        if (err.code === 'failed-precondition' || err.message?.includes('index')) {
+          console.error('[useMeetings] MISSING INDEX - Create the required index in Firebase Console');
+          console.error('[useMeetings] Index needed: meetings collection, fields: userId (asc) + createdAt (desc)');
+          setError('Database configuration error. Please contact support.');
+          setMeetings([]);
+          setLoading(false);
+          setState('error');
+          return;
+        }
+        
+        // Only show error for real failures (network, unknown errors)
+        const errorMessage = err.code === 'unavailable' 
+          ? 'Service unavailable. Please check your connection.'
+          : 'Failed to load meetings. Please try again.';
+        
+        console.error('[useMeetings] Setting error state:', errorMessage);
         setError(errorMessage);
+        setMeetings([]);
         setLoading(false);
         setState('error');
       }

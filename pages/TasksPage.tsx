@@ -4,7 +4,6 @@ import {
   collection, 
   query, 
   where, 
-  orderBy, 
   onSnapshot,
   Timestamp 
 } from 'firebase/firestore';
@@ -46,23 +45,36 @@ const TasksPage: React.FC = () => {
 
   // Fetch tasks for current user
   useEffect(() => {
-    if (authLoading) return;
-
-    if (!user?.uid) {
-      setTasks([]);
-      setLoading(false);
+    // ============================================
+    // CRITICAL: Wait for auth to finish loading
+    // On page reload, Firebase restores auth session asynchronously.
+    // We MUST wait for this to complete before querying Firestore.
+    // ============================================
+    if (authLoading) {
+      console.log('[TasksPage] Auth loading, waiting...');
+      setLoading(true);
       return;
     }
 
-    console.log('[TasksPage] Setting up tasks listener for user:', user.uid);
+    // No user after auth finished = show empty state
+    if (!user?.uid) {
+      console.log('[TasksPage] No authenticated user, showing empty state');
+      setTasks([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    console.log('[TasksPage] Auth ready, setting up tasks listener for user:', user.uid);
     setLoading(true);
+    setError(null);
 
     // Query tasks for current user
     // IMPORTANT: Always filter by userId for security
+    // NOTE: No orderBy to avoid requiring composite index - we sort in JS
     const tasksQuery = query(
       collection(db, 'tasks'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(
@@ -83,6 +95,13 @@ const TasksPage: React.FC = () => {
             status: (data.status as TaskStatus) || 'pending',
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
           });
+        });
+
+        // Sort by createdAt descending (newest first) in JS
+        tasksData.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
         });
 
         console.log('[TasksPage] Received tasks:', tasksData.length);
