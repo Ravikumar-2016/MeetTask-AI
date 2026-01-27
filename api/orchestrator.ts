@@ -78,6 +78,21 @@ export default async function handler(
   console.log('🎯 [Orchestrator] Request received');
   console.log('========================================\n');
 
+  // ----------------------------------------
+  // Step 0: Check Environment Variables
+  // ----------------------------------------
+  const missingEnvVars: string[] = [];
+  if (!process.env.GEMINI_API_KEY) missingEnvVars.push('GEMINI_API_KEY');
+  if (!process.env.OPENAI_API_KEY) missingEnvVars.push('OPENAI_API_KEY');
+  
+  if (missingEnvVars.length > 0) {
+    console.error('❌ [Orchestrator] Missing environment variables:', missingEnvVars.join(', '));
+    return response.status(500).json({
+      success: false,
+      error: `Server configuration error: Missing ${missingEnvVars.join(', ')}. Please add these in Vercel Dashboard > Settings > Environment Variables.`,
+    });
+  }
+
   try {
     // ----------------------------------------
     // Step 1: Verify Authentication
