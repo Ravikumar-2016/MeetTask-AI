@@ -2,9 +2,11 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMeetings, getStatusBadgeClass, getFileTypeIcon } from '../hooks/useMeetings';
+import { processMeeting } from '../services/api';
 
 const MeetingsPage: React.FC = () => {
   const [filter, setFilter] = useState('all');
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   
   // Fetch real meetings from Firestore
   // state can be: 'loading' | 'empty' | 'success' | 'error'
@@ -14,6 +16,27 @@ const MeetingsPage: React.FC = () => {
   const filteredMeetings = filter === 'all' 
     ? meetings 
     : meetings.filter(m => m.status === filter);
+
+  // Handle retry processing for stuck meetings
+  const handleRetryProcessing = async (e: React.MouseEvent, meetingId: string) => {
+    e.preventDefault(); // Prevent navigation
+    e.stopPropagation();
+    
+    setRetryingId(meetingId);
+    try {
+      console.log('[Meetings] Retrying processing for:', meetingId);
+      const result = await processMeeting(meetingId);
+      console.log('[Meetings] Retry result:', result);
+      if (!result.success) {
+        alert(`Processing failed: ${result.error}`);
+      }
+    } catch (err: any) {
+      console.error('[Meetings] Retry error:', err);
+      alert(`Error: ${err.message}`);
+    } finally {
+      setRetryingId(null);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -116,6 +139,26 @@ const MeetingsPage: React.FC = () => {
                   <span className="text-lg font-bold text-slate-900">{meeting.taskCount || 0}</span>
                 </div>
                 <div className="flex items-center space-x-3">
+                  {/* Retry button for stuck meetings */}
+                  {(meeting.status === 'uploaded' || meeting.status === 'error') && (
+                    <button
+                      onClick={(e) => handleRetryProcessing(e, meeting.id)}
+                      disabled={retryingId === meeting.id}
+                      className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-200 transition disabled:opacity-50 flex items-center space-x-1"
+                    >
+                      {retryingId === meeting.id ? (
+                        <>
+                          <span className="animate-spin material-icons text-sm">refresh</span>
+                          <span>Processing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-icons text-sm">play_arrow</span>
+                          <span>Process</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                   <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStatusBadgeClass(meeting.status)}`}>
                     {meeting.status}
                   </span>

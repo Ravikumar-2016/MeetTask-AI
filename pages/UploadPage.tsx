@@ -196,29 +196,35 @@ const UploadPage: React.FC = () => {
 
       console.log('[Upload] Complete! Meeting ID:', meetingId);
       setProgress(100);
-      setSuccess(true);
 
       // Step 6: Trigger AI Orchestrator for ALL file types
       // The orchestrator will handle the appropriate processing based on file type
-      // This is non-blocking - returns immediately, processing happens in background
       console.log('[Upload] Triggering AI orchestrator...');
       
-      processMeeting(meetingId)
-        .then((result) => {
-          if (result.success) {
-            console.log('[Upload] Orchestrator started successfully:', result.message);
-          } else {
-            console.error('[Upload] Orchestrator failed:', result.error);
-          }
-        })
-        .catch((err) => {
-          console.error('[Upload] Orchestrator error:', err);
-        });
+      try {
+        const result = await processMeeting(meetingId);
+        console.log('[Upload] Orchestrator result:', result);
+        
+        if (result.success) {
+          console.log('[Upload] Orchestrator completed successfully:', result.message);
+          setSuccess(true);
+        } else {
+          console.error('[Upload] Orchestrator failed:', result.error);
+          // Still show success for upload, but log the error
+          // The meeting can be reprocessed later
+          setSuccess(true);
+          setError(`Upload complete, but AI processing failed: ${result.error}`);
+        }
+      } catch (orchestratorError: any) {
+        console.error('[Upload] Orchestrator exception:', orchestratorError);
+        setSuccess(true);
+        setError(`Upload complete, but AI processing failed: ${orchestratorError.message}`);
+      }
 
       setUploading(false);
 
       // Redirect after showing success message
-      setTimeout(() => navigate('/meetings'), 2000);
+      setTimeout(() => navigate('/meetings'), 3000);
 
     } catch (err) {
       console.error('[Upload] Error:', err);
