@@ -1,0 +1,8 @@
+
+{
+  "name": "MeetTask AI",
+  "description": "An AI-powered meeting assistant that transcribes recordings and extracts actionable tasks, owners, and deadlines.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
