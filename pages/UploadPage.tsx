@@ -123,6 +123,9 @@ const UploadPage: React.FC = () => {
   /**
    * Save meeting metadata to Firestore after successful Cloudinary upload
    * 
+   * IMPORTANT: Frontend ONLY sets status to 'uploaded'.
+   * Backend orchestrator controls all status updates after this.
+   * 
    * @param cloudinaryUrl - The secure URL from Cloudinary
    * @param fileName - Original file name
    * @param fileType - 'image', 'video', or 'audio'
@@ -130,22 +133,20 @@ const UploadPage: React.FC = () => {
   const saveToFirestore = async (cloudinaryUrl: string, fileName: string, fileType: FileType) => {
     if (!user) throw new Error('User not authenticated');
 
-    // For images, set status to 'completed' since no AI processing needed
-    // For audio/video, set to 'uploaded' to trigger transcription pipeline
-    const status = fileType === 'image' ? 'completed' : 'uploaded';
-
+    // ALWAYS set status to 'uploaded' - backend controls lifecycle from here
     const meetingData = {
       title: title.trim(),
       userId: user.uid,
       audioUrl: cloudinaryUrl, // Keep field name for backward compatibility
-      fileType: fileType, // NEW: track file type
-      status: status as 'uploaded' | 'completed',
+      fileUrl: cloudinaryUrl,  // Also save as fileUrl for clarity
+      fileType: fileType,
+      status: 'uploaded' as const, // Frontend ONLY sets this, backend handles rest
       createdAt: serverTimestamp(),
       originalFileName: fileName,
     };
 
     console.log('[Firestore] Saving meeting:', meetingData);
-    console.log('[Firestore] File type:', fileType, '- Status:', status);
+    console.log('[Firestore] File type:', fileType);
     
     const docRef = await addDoc(collection(db, 'meetings'), meetingData);
     console.log('[Firestore] Meeting saved with ID:', docRef.id);
@@ -197,27 +198,22 @@ const UploadPage: React.FC = () => {
       setProgress(100);
       setSuccess(true);
 
-      // Step 6: Trigger AI pipeline for audio/video files
-      // Images are already marked as 'completed' - no processing needed
-      if (fileType !== 'image') {
-        console.log('[Upload] Triggering AI pipeline for audio/video...');
-        
-        // Don't await - let it process in background
-        // The UI will update automatically via Firestore real-time listeners
-        processMeeting(meetingId)
-          .then((result) => {
-            if (result.success) {
-              console.log('[Upload] AI pipeline completed successfully');
-            } else {
-              console.error('[Upload] AI pipeline failed:', result.error);
-            }
-          })
-          .catch((err) => {
-            console.error('[Upload] AI pipeline error:', err);
-          });
-      } else {
-        console.log('[Upload] Image file - skipping AI pipeline');
-      }
+      // Step 6: Trigger AI Orchestrator for ALL file types
+      // The orchestrator will handle the appropriate processing based on file type
+      // This is non-blocking - returns immediately, processing happens in background
+      console.log('[Upload] Triggering AI orchestrator...');
+      
+      processMeeting(meetingId)
+        .then((result) => {
+          if (result.success) {
+            console.log('[Upload] Orchestrator started successfully:', result.message);
+          } else {
+            console.error('[Upload] Orchestrator failed:', result.error);
+          }
+        })
+        .catch((err) => {
+          console.error('[Upload] Orchestrator error:', err);
+        });
 
       setUploading(false);
 

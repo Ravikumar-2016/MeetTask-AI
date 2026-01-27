@@ -24,36 +24,40 @@ async function getAuthToken(): Promise<string> {
 }
 
 /**
- * Process a meeting through the AI pipeline
+ * Trigger AI processing for a meeting via the Orchestrator
  * 
- * This triggers:
- * 1. Transcription with Gemini (for audio/video)
- * 2. Extraction with OpenAI (summary + tasks)
- * 3. Saves results to Firestore
+ * This calls the orchestrator endpoint which:
+ * 1. Updates status to "processing"
+ * 2. Triggers the worker in background
+ * 3. Returns immediately (non-blocking)
+ * 
+ * The UI updates automatically via Firestore real-time listeners.
  * 
  * @param meetingId - The Firestore document ID of the meeting
- * @returns Promise with processing result
+ * @returns Promise with processing initiation result
  */
 export const processMeeting = async (meetingId: string): Promise<{ success: boolean; message?: string; error?: string }> => {
   try {
     const token = await getAuthToken();
     
-    const response = await api.post('/process-meeting', 
+    // Call orchestrator (returns immediately, processing happens in background)
+    const response = await api.post('/orchestrator', 
       { meetingId },
       {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
-        timeout: 120000, // 2 minute timeout for long transcriptions
+        timeout: 30000, // 30 seconds is enough since orchestrator returns immediately
       }
     );
     
+    console.log('[API] Orchestrator response:', response.data);
     return response.data;
   } catch (error: any) {
-    console.error('[API] Process meeting error:', error.response?.data || error.message);
+    console.error('[API] Orchestrator error:', error.response?.data || error.message);
     return {
       success: false,
-      error: error.response?.data?.error || error.message || 'Processing failed',
+      error: error.response?.data?.error || error.message || 'Failed to start processing',
     };
   }
 };
