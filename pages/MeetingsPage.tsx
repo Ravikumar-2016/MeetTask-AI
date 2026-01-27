@@ -28,11 +28,15 @@ const MeetingsPage: React.FC = () => {
       const result = await processMeeting(meetingId);
       console.log('[Meetings] Retry result:', result);
       if (!result.success) {
-        alert(`Processing failed: ${result.error}`);
+        const errorMsg = typeof result.error === 'object' 
+          ? JSON.stringify(result.error) 
+          : result.error || 'Unknown error';
+        alert(`Processing failed: ${errorMsg}`);
       }
     } catch (err: any) {
       console.error('[Meetings] Retry error:', err);
-      alert(`Error: ${err.message}`);
+      const errorMsg = err?.response?.data?.error || err?.message || JSON.stringify(err);
+      alert(`Error: ${errorMsg}`);
     } finally {
       setRetryingId(null);
     }
