@@ -14,7 +14,22 @@ import { useAuth } from '../contexts/AuthContext';
 // ============================================
 const CLOUDINARY_CLOUD_NAME = 'dmdyvkf2j';
 const CLOUDINARY_UPLOAD_PRESET = 'meeting_uploads';
-const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+
+// File type detection helper
+type FileType = 'image' | 'video' | 'audio';
+
+const detectFileType = (file: File): FileType => {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  return 'audio';
+};
+
+// Get Cloudinary upload URL based on file type
+const getCloudinaryUploadUrl = (fileType: FileType): string => {
+  // For images, use /image/upload; for audio/video use /video/upload
+  const resourceType = fileType === 'image' ? 'image' : 'video';
+  return `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`;
+};
 
 // Cloudinary response type
 interface CloudinaryResponse {
@@ -52,13 +67,20 @@ const UploadPage: React.FC = () => {
   /**
    * Upload file directly to Cloudinary (unsigned upload)
    * This bypasses the backend to avoid Vercel's file size limits
+   * 
+   * @param file - The file to upload
+   * @param fileType - 'image', 'video', or 'audio' to determine Cloudinary resource type
    */
-  const uploadToCloudinary = async (file: File): Promise<CloudinaryResponse> => {
+  const uploadToCloudinary = async (file: File, fileType: FileType): Promise<CloudinaryResponse> => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
     // Note: folder is configured in the upload preset on Cloudinary dashboard
     // If you need to override, add: formData.append('folder', 'meetings');
+
+    // Get correct upload URL based on file type
+    const uploadUrl = getCloudinaryUploadUrl(fileType);
+    console.log(`[Cloudinary] Using ${fileType} upload endpoint:`, uploadUrl);
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -79,6 +101,7 @@ const UploadPage: React.FC = () => {
           console.log('[Cloudinary] File URL:', response.secure_url);
           console.log('[Cloudinary] Folder:', response.folder || 'root (check preset config)');
           console.log('[Cloudinary] Public ID:', response.public_id);
+          console.log('[Cloudinary] Resource type:', response.resource_type);
           resolve(response);
         } else {
           console.error('[Cloudinary] Upload failed:', xhr.status, xhr.responseText);
@@ -91,27 +114,37 @@ const UploadPage: React.FC = () => {
         reject(new Error('Network error during upload'));
       });
 
-      xhr.open('POST', CLOUDINARY_UPLOAD_URL);
+      xhr.open('POST', uploadUrl);
       xhr.send(formData);
     });
   };
 
   /**
    * Save meeting metadata to Firestore after successful Cloudinary upload
+   * 
+   * @param cloudinaryUrl - The secure URL from Cloudinary
+   * @param fileName - Original file name
+   * @param fileType - 'image', 'video', or 'audio'
    */
-  const saveToFirestore = async (cloudinaryUrl: string, fileName: string) => {
+  const saveToFirestore = async (cloudinaryUrl: string, fileName: string, fileType: FileType) => {
     if (!user) throw new Error('User not authenticated');
+
+    // For images, set status to 'completed' since no AI processing needed
+    // For audio/video, set to 'uploaded' to trigger transcription pipeline
+    const status = fileType === 'image' ? 'completed' : 'uploaded';
 
     const meetingData = {
       title: title.trim(),
       userId: user.uid,
-      audioUrl: cloudinaryUrl,
-      status: 'uploaded' as const,
+      audioUrl: cloudinaryUrl, // Keep field name for backward compatibility
+      fileType: fileType, // NEW: track file type
+      status: status as 'uploaded' | 'completed',
       createdAt: serverTimestamp(),
       originalFileName: fileName,
     };
 
     console.log('[Firestore] Saving meeting:', meetingData);
+    console.log('[Firestore] File type:', fileType, '- Status:', status);
     
     const docRef = await addDoc(collection(db, 'meetings'), meetingData);
     console.log('[Firestore] Meeting saved with ID:', docRef.id);
@@ -128,16 +161,20 @@ const UploadPage: React.FC = () => {
     setProgress(0);
 
     try {
-      // Step 1: Upload to Cloudinary
-      console.log('[Upload] Starting Cloudinary upload for:', file.name);
-      const cloudinaryResponse = await uploadToCloudinary(file);
+      // Step 1: Detect file type
+      const fileType = detectFileType(file);
+      console.log('[Upload] Detected file type:', fileType);
 
-      // Step 2: Verify upload was successful
+      // Step 2: Upload to Cloudinary with correct resource type
+      console.log('[Upload] Starting Cloudinary upload for:', file.name);
+      const cloudinaryResponse = await uploadToCloudinary(file, fileType);
+
+      // Step 3: Verify upload was successful
       if (!cloudinaryResponse.secure_url) {
         throw new Error('Cloudinary did not return a secure URL');
       }
 
-      // Step 3: Verify folder (if preset is configured correctly)
+      // Step 4: Verify folder (if preset is configured correctly)
       // Note: Cloudinary folders are virtual - they appear after first upload
       if (cloudinaryResponse.public_id) {
         const expectedFolder = 'meetings/';
@@ -150,9 +187,10 @@ const UploadPage: React.FC = () => {
         }
       }
 
-      // Step 4: Save to Firestore
+      // Step 5: Save to Firestore with file type
+      // Images will be marked as 'completed', audio/video as 'uploaded' (pending AI)
       console.log('[Upload] Saving to Firestore...');
-      const meetingId = await saveToFirestore(cloudinaryResponse.secure_url, file.name);
+      const meetingId = await saveToFirestore(cloudinaryResponse.secure_url, file.name, fileType);
 
       console.log('[Upload] Complete! Meeting ID:', meetingId);
       setProgress(100);
@@ -203,14 +241,14 @@ const UploadPage: React.FC = () => {
                 className="hidden" 
                 ref={fileInputRef} 
                 onChange={handleFileChange}
-                accept="audio/*,video/*"
+                accept="audio/*,video/*,image/*"
               />
               <div className="space-y-2">
                 <span className="material-icons text-slate-400 text-5xl">cloud_upload</span>
                 <div className="text-lg font-bold text-slate-900">
                   {file ? file.name : 'Click to upload or drag and drop'}
                 </div>
-                <p className="text-sm text-slate-500">MP4, MOV, MP3 or WAV (Max 500MB)</p>
+                <p className="text-sm text-slate-500">MP4, MOV, MP3, WAV, JPG, PNG, WEBP (Max 500MB)</p>
               </div>
             </div>
 

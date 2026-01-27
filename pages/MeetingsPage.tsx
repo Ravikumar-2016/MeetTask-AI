@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMeetings, getStatusBadgeClass } from '../hooks/useMeetings';
+import { useMeetings, getStatusBadgeClass, getFileTypeIcon } from '../hooks/useMeetings';
 
 const MeetingsPage: React.FC = () => {
   const [filter, setFilter] = useState('all');
@@ -98,7 +98,9 @@ const MeetingsPage: React.FC = () => {
             >
               <div className="flex items-center space-x-4">
                 <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
-                  <span className="material-icons text-slate-400 group-hover:text-indigo-600">video_library</span>
+                  <span className="material-icons text-slate-400 group-hover:text-indigo-600">
+                    {getFileTypeIcon(meeting.fileType)}
+                  </span>
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">{meeting.title}</h3>

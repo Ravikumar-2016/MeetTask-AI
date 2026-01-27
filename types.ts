@@ -8,6 +8,7 @@ export interface User {
 }
 
 export type MeetingStatus = 'uploaded' | 'processing' | 'completed' | 'error';
+export type FileType = 'image' | 'video' | 'audio';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
 
@@ -16,6 +17,7 @@ export interface Meeting {
   title: string;
   date: string;
   status: MeetingStatus;
+  fileType?: FileType; // NEW: track if image, video, or audio
   audioUrl?: string;
   videoUrl?: string;
   userId: string;

@@ -2,7 +2,7 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useMeetings, getStatusBadgeClass } from '../hooks/useMeetings';
+import { useMeetings, getStatusBadgeClass, getFileTypeIcon } from '../hooks/useMeetings';
 import { DashboardStats } from '../types';
 
 const StatCard: React.FC<{ title: string; value: string | number; icon: string; color: string; loading?: boolean }> = ({ 
@@ -149,7 +149,12 @@ const Dashboard: React.FC = () => {
                       onClick={() => navigate(`/meetings/${meeting.id}`)}
                     >
                       <td className="px-6 py-4">
-                        <p className="font-semibold text-slate-900">{meeting.title}</p>
+                        <div className="flex items-center space-x-3">
+                          <span className="material-icons text-slate-400 text-lg">
+                            {getFileTypeIcon(meeting.fileType)}
+                          </span>
+                          <p className="font-semibold text-slate-900">{meeting.title}</p>
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-slate-600 text-sm">{meeting.date}</td>
                       <td className="px-6 py-4">

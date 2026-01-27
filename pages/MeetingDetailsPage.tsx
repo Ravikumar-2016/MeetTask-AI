@@ -99,6 +99,7 @@ const MeetingDetailsPage: React.FC = () => {
           title: data.title || 'Untitled Meeting',
           date: formatDate(data.createdAt),
           status: (data.status as MeetingStatus) || 'uploaded',
+          fileType: data.fileType || 'audio', // Default to audio for backward compatibility
           audioUrl: data.audioUrl,
           userId: data.userId,
           taskCount: data.taskCount || 0,

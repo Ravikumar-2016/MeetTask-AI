@@ -137,6 +137,7 @@ export const useMeetings = (): UseMeetingsReturn => {
             title: data.title || 'Untitled Meeting',
             date: formatDate(data.createdAt),
             status: (data.status as MeetingStatus) || 'uploaded',
+            fileType: data.fileType || 'audio', // Default to audio for backward compatibility
             audioUrl: data.audioUrl,
             userId: data.userId,
             taskCount: data.taskCount || 0,
@@ -231,5 +232,21 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
       return 'bg-rose-100 text-rose-700';
     default:
       return 'bg-slate-100 text-slate-700';
+  }
+};
+
+/**
+ * Get icon name for file type
+ * Returns Material Icons name
+ */
+export const getFileTypeIcon = (fileType?: string): string => {
+  switch (fileType) {
+    case 'image':
+      return 'image';
+    case 'video':
+      return 'videocam';
+    case 'audio':
+    default:
+      return 'mic';
   }
 };
