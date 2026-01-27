@@ -16,21 +16,35 @@ export interface Meeting {
   title: string;
   date: string;
   status: MeetingStatus;
-  transcript?: string;
-  videoUrl?: string;
   audioUrl?: string;
+  videoUrl?: string;
   userId: string;
+  taskCount?: number;
+  errorMessage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface Transcript {
+  meetingId: string;
+  userId: string;
+  text: string;
+  wordCount: number;
+  createdAt?: string;
 }
 
 export interface Task {
   id: string;
   meetingId: string;
+  userId: string;
   title: string;
   description: string;
   owner: string;
   deadline: string;
   priority: TaskPriority;
   status: TaskStatus;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DashboardStats {
@@ -38,4 +52,31 @@ export interface DashboardStats {
   pendingTasks: number;
   completedTasks: number;
   overdueTasks: number;
+}
+
+// API Response types
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  details?: string;
+}
+
+export interface CreateMeetingResponse {
+  success: boolean;
+  meeting: Meeting;
+}
+
+export interface TranscribeResponse {
+  success: boolean;
+  meetingId: string;
+  transcript: string;
+  wordCount: number;
+}
+
+export interface ExtractTasksResponse {
+  success: boolean;
+  meetingId: string;
+  taskCount: number;
+  tasks: Task[];
 }

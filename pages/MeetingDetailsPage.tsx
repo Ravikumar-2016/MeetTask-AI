@@ -1,33 +1,212 @@
 
-import React, { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { 
+  doc, 
+  getDoc, 
+  collection, 
+  query, 
+  where, 
+  onSnapshot,
+  Timestamp 
+} from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus } from '../types';
+import { getStatusBadgeClass } from '../hooks/useMeetings';
+
+/**
+ * Format Firestore timestamp to readable date string
+ */
+const formatDate = (timestamp: Timestamp | string | undefined): string => {
+  if (!timestamp) return 'Unknown date';
+  try {
+    const date = timestamp instanceof Timestamp 
+      ? timestamp.toDate() 
+      : new Date(timestamp);
+    return date.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  } catch {
+    return 'Invalid date';
+  }
+};
 
 const MeetingDetailsPage: React.FC = () => {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'tasks' | 'transcript'>('tasks');
+  
+  // State for meeting data
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
+  const [transcript, setTranscript] = useState<string>('');
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data for details
-  const meeting = {
-    id,
-    title: 'Q4 Product Roadmap Strategy',
-    date: 'October 24, 2023',
-    status: 'completed',
-    transcript: `
-      Sarah: Okay, let's kick things off for the Q4 product planning.
-      Mike: I've looked at the current back-log and we need to prioritize the API improvements.
-      Sarah: Agreed. Mike, can you have a proposal for the API refactoring by Friday?
-      Mike: Sure, I'll take that.
-      David: We also need to update the marketing landing page before November 15th.
-      Sarah: Right. David, that's yours. 
-      ...
-    `
-  };
+  // Fetch meeting details
+  useEffect(() => {
+    if (!id || !user?.uid) {
+      setLoading(false);
+      return;
+    }
 
-  const tasks = [
-    { id: 't1', title: 'API Refactoring Proposal', owner: 'Mike Chen', deadline: 'Oct 27, 2023', priority: 'high', status: 'pending' },
-    { id: 't2', title: 'Landing Page Update', owner: 'David Smith', deadline: 'Nov 15, 2023', priority: 'medium', status: 'pending' },
-    { id: 't3', title: 'Security Audit Prep', owner: 'Sarah Wilson', deadline: 'Nov 01, 2023', priority: 'high', status: 'completed' },
-  ];
+    const fetchMeeting = async () => {
+      try {
+        console.log('[MeetingDetails] Fetching meeting:', id);
+        
+        // Get meeting document
+        const meetingRef = doc(db, 'meetings', id);
+        const meetingSnap = await getDoc(meetingRef);
+
+        if (!meetingSnap.exists()) {
+          console.log('[MeetingDetails] Meeting not found');
+          setError('Meeting not found');
+          setLoading(false);
+          return;
+        }
+
+        const data = meetingSnap.data();
+        
+        // Verify ownership - CRITICAL for security
+        if (data.userId !== user.uid) {
+          console.log('[MeetingDetails] Access denied - not owner');
+          setError('You do not have permission to view this meeting');
+          setLoading(false);
+          return;
+        }
+
+        const meetingData: Meeting = {
+          id: meetingSnap.id,
+          title: data.title || 'Untitled Meeting',
+          date: formatDate(data.createdAt),
+          status: (data.status as MeetingStatus) || 'uploaded',
+          audioUrl: data.audioUrl,
+          userId: data.userId,
+          taskCount: data.taskCount || 0,
+          errorMessage: data.errorMessage,
+          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
+        };
+
+        console.log('[MeetingDetails] Meeting loaded:', meetingData.title);
+        setMeeting(meetingData);
+        setLoading(false);
+      } catch (err) {
+        console.error('[MeetingDetails] Error fetching meeting:', err);
+        setError('Failed to load meeting details');
+        setLoading(false);
+      }
+    };
+
+    fetchMeeting();
+  }, [id, user?.uid]);
+
+  // Fetch transcript
+  useEffect(() => {
+    if (!id || !user?.uid) return;
+
+    const fetchTranscript = async () => {
+      try {
+        const transcriptRef = doc(db, 'transcripts', id);
+        const transcriptSnap = await getDoc(transcriptRef);
+
+        if (transcriptSnap.exists()) {
+          const data = transcriptSnap.data();
+          setTranscript(data.text || '');
+          console.log('[MeetingDetails] Transcript loaded');
+        }
+      } catch (err) {
+        console.error('[MeetingDetails] Error fetching transcript:', err);
+        // Transcript is optional, don't set error
+      }
+    };
+
+    fetchTranscript();
+  }, [id, user?.uid]);
+
+  // Real-time listener for tasks
+  useEffect(() => {
+    if (!id || !user?.uid) return;
+
+    console.log('[MeetingDetails] Setting up tasks listener for meeting:', id);
+
+    // Query tasks for this meeting
+    const tasksQuery = query(
+      collection(db, 'tasks'),
+      where('meetingId', '==', id)
+    );
+
+    const unsubscribe = onSnapshot(
+      tasksQuery,
+      (snapshot) => {
+        const tasksData: Task[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          tasksData.push({
+            id: doc.id,
+            meetingId: data.meetingId,
+            userId: data.userId,
+            title: data.title || 'Untitled Task',
+            description: data.description || '',
+            owner: data.owner || 'Unassigned',
+            deadline: data.deadline || '',
+            priority: (data.priority as TaskPriority) || 'medium',
+            status: (data.status as TaskStatus) || 'pending',
+            createdAt: data.createdAt?.toDate?.()?.toISOString(),
+          });
+        });
+
+        console.log('[MeetingDetails] Tasks updated:', tasksData.length);
+        setTasks(tasksData);
+      },
+      (err) => {
+        console.error('[MeetingDetails] Error fetching tasks:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [id, user?.uid]);
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center space-x-4">
+          <div className="w-10 h-10 bg-slate-100 rounded-xl animate-pulse"></div>
+          <div className="space-y-2">
+            <div className="h-6 bg-slate-100 rounded w-64 animate-pulse"></div>
+            <div className="h-4 bg-slate-100 rounded w-32 animate-pulse"></div>
+          </div>
+        </div>
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 animate-pulse">
+          <div className="h-32 bg-slate-100 rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || !meeting) {
+    return (
+      <div className="space-y-8">
+        <Link 
+          to="/meetings" 
+          className="inline-flex items-center space-x-2 text-slate-600 hover:text-slate-900"
+        >
+          <span className="material-icons">arrow_back</span>
+          <span>Back to Meetings</span>
+        </Link>
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 p-8 rounded-2xl text-center">
+          <span className="material-icons text-4xl mb-4">error_outline</span>
+          <h2 className="font-bold text-xl mb-2">Unable to Load Meeting</h2>
+          <p>{error || 'Meeting not found'}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -74,63 +253,104 @@ const MeetingDetailsPage: React.FC = () => {
 
           {activeTab === 'tasks' ? (
             <div className="space-y-4">
-              {tasks.map((task) => (
-                <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-start justify-between">
-                  <div className="flex items-start space-x-4">
-                    <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
-                      task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
-                    }`}>
-                      {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
-                    </button>
-                    <div>
-                      <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
-                      <div className="flex flex-wrap gap-4 mt-2">
-                        <div className="flex items-center text-sm text-slate-500">
-                          <span className="material-icons text-[14px] mr-1">person</span> {task.owner}
+              {tasks.length === 0 ? (
+                <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center">
+                  <span className="material-icons text-slate-300 text-5xl mb-4">assignment</span>
+                  <h3 className="font-bold text-slate-900 mb-2">No tasks yet</h3>
+                  <p className="text-slate-500">
+                    {meeting.status === 'completed' 
+                      ? 'No action items were extracted from this meeting'
+                      : 'Tasks will appear here after processing completes'}
+                  </p>
+                </div>
+              ) : (
+                tasks.map((task) => (
+                  <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-start justify-between">
+                    <div className="flex items-start space-x-4">
+                      <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
+                        task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
+                      }`}>
+                        {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
+                      </button>
+                      <div>
+                        <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
+                        <div className="flex flex-wrap gap-4 mt-2">
+                          <div className="flex items-center text-sm text-slate-500">
+                            <span className="material-icons text-[14px] mr-1">person</span> {task.owner}
+                          </div>
+                          {task.deadline && (
+                            <div className="flex items-center text-sm text-slate-500">
+                              <span className="material-icons text-[14px] mr-1">event</span> {task.deadline}
+                            </div>
+                          )}
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                            task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-slate-50 text-slate-600 border border-slate-100'
+                          }`}>
+                            {task.priority} Priority
+                          </span>
                         </div>
-                        <div className="flex items-center text-sm text-slate-500">
-                          <span className="material-icons text-[14px] mr-1">event</span> {task.deadline}
-                        </div>
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                          task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-slate-50 text-slate-600 border border-slate-100'
-                        }`}>
-                          {task.priority} Priority
-                        </span>
                       </div>
                     </div>
+                    <button className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-50">
+                      <span className="material-icons">more_vert</span>
+                    </button>
                   </div>
-                  <button className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-50">
-                    <span className="material-icons">more_vert</span>
-                  </button>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           ) : (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
-              {meeting.transcript}
+              {transcript ? (
+                transcript
+              ) : (
+                <div className="text-center py-8">
+                  <span className="material-icons text-slate-300 text-5xl mb-4">description</span>
+                  <h3 className="font-bold text-slate-900 mb-2">No transcript yet</h3>
+                  <p className="text-slate-500">
+                    {meeting.status === 'completed' 
+                      ? 'Transcript not available for this meeting'
+                      : 'Transcript will appear here after processing completes'}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <div className="space-y-6">
+          {/* Status Badge */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 className="font-bold text-lg mb-4">Meeting Summary</h3>
-            <p className="text-slate-600 text-sm leading-relaxed mb-4">
-              The team discussed the Q4 roadmap focusing heavily on technical debt and marketing alignment. 
-              API refactoring was identified as a critical bottleneck for the upcoming feature releases.
-            </p>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg">Status</h3>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${getStatusBadgeClass(meeting.status)}`}>
+                {meeting.status}
+              </span>
+            </div>
+            {meeting.status === 'error' && meeting.errorMessage && (
+              <p className="text-rose-600 text-sm">{meeting.errorMessage}</p>
+            )}
+            {meeting.status === 'processing' && (
+              <p className="text-blue-600 text-sm">Your meeting is being processed. Tasks will appear shortly.</p>
+            )}
+            {meeting.status === 'uploaded' && (
+              <p className="text-amber-600 text-sm">Meeting uploaded. Waiting for processing to begin.</p>
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="font-bold text-lg mb-4">Meeting Info</h3>
             <div className="space-y-2">
               <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Duration</span>
-                <span className="font-bold">45m 12s</span>
+                <span className="text-slate-500">Date</span>
+                <span className="font-bold">{meeting.date}</span>
               </div>
               <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Speakers</span>
-                <span className="font-bold">3 Identified</span>
+                <span className="text-slate-500">Tasks</span>
+                <span className="font-bold">{tasks.length}</span>
               </div>
               <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Key Themes</span>
-                <span className="font-bold">Architecture, Marketing</span>
+                <span className="text-slate-500">Status</span>
+                <span className="font-bold capitalize">{meeting.status}</span>
               </div>
             </div>
           </div>

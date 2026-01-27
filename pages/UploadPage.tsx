@@ -1,9 +1,35 @@
 
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth } from '../contexts/AuthContext';
+
+// ============================================
+// CLOUDINARY CONFIGURATION
+// ============================================
+// Cloudinary folders are VIRTUAL - they only appear in the dashboard
+// after the first file is uploaded to that folder path.
+// The folder is specified via the upload preset or formData.
+// ============================================
+const CLOUDINARY_CLOUD_NAME = 'dmdyvkf2j';
+const CLOUDINARY_UPLOAD_PRESET = 'meeting_uploads';
+const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+
+// Cloudinary response type
+interface CloudinaryResponse {
+  secure_url: string;
+  public_id: string;
+  folder: string;
+  format: string;
+  resource_type: string;
+  bytes: number;
+  duration?: number;
+  original_filename: string;
+}
 
 const UploadPage: React.FC = () => {
+  const { user } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -23,47 +49,124 @@ const UploadPage: React.FC = () => {
     }
   };
 
+  /**
+   * Upload file directly to Cloudinary (unsigned upload)
+   * This bypasses the backend to avoid Vercel's file size limits
+   */
+  const uploadToCloudinary = async (file: File): Promise<CloudinaryResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    // Note: folder is configured in the upload preset on Cloudinary dashboard
+    // If you need to override, add: formData.append('folder', 'meetings');
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = Math.round((event.loaded / event.total) * 100);
+          setProgress(percentComplete);
+          console.log(`[Cloudinary] Upload progress: ${percentComplete}%`);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const response: CloudinaryResponse = JSON.parse(xhr.responseText);
+          console.log('[Cloudinary] Upload successful:', response);
+          console.log('[Cloudinary] File URL:', response.secure_url);
+          console.log('[Cloudinary] Folder:', response.folder || 'root (check preset config)');
+          console.log('[Cloudinary] Public ID:', response.public_id);
+          resolve(response);
+        } else {
+          console.error('[Cloudinary] Upload failed:', xhr.status, xhr.responseText);
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        console.error('[Cloudinary] Network error during upload');
+        reject(new Error('Network error during upload'));
+      });
+
+      xhr.open('POST', CLOUDINARY_UPLOAD_URL);
+      xhr.send(formData);
+    });
+  };
+
+  /**
+   * Save meeting metadata to Firestore after successful Cloudinary upload
+   */
+  const saveToFirestore = async (cloudinaryUrl: string, fileName: string) => {
+    if (!user) throw new Error('User not authenticated');
+
+    const meetingData = {
+      title: title.trim(),
+      userId: user.uid,
+      audioUrl: cloudinaryUrl,
+      status: 'uploaded' as const,
+      createdAt: serverTimestamp(),
+      originalFileName: fileName,
+    };
+
+    console.log('[Firestore] Saving meeting:', meetingData);
+    
+    const docRef = await addDoc(collection(db, 'meetings'), meetingData);
+    console.log('[Firestore] Meeting saved with ID:', docRef.id);
+    
+    return docRef.id;
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !title) return;
+    if (!file || !title || !user) return;
 
     setUploading(true);
     setError('');
     setProgress(0);
 
-    // Simulation for demo purposes if backend isn't real
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('title', title);
-
     try {
-      // In a real production scenario, you would use axios or fetch
-      // await axios.post('/api/upload', formData, {
-      //   onUploadProgress: (progressEvent) => {
-      //     const p = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-      //     setProgress(p);
-      //   }
-      // });
+      // Step 1: Upload to Cloudinary
+      console.log('[Upload] Starting Cloudinary upload for:', file.name);
+      const cloudinaryResponse = await uploadToCloudinary(file);
 
-      // Simulate network request
-      let currentProgress = 0;
-      const interval = setInterval(() => {
-        currentProgress += Math.random() * 30;
-        if (currentProgress >= 100) {
-          clearInterval(interval);
-          setProgress(100);
-          setSuccess(true);
-          setUploading(false);
-          // Redirect after 2 seconds
-          setTimeout(() => navigate('/meetings'), 2000);
-        } else {
-          setProgress(currentProgress);
+      // Step 2: Verify upload was successful
+      if (!cloudinaryResponse.secure_url) {
+        throw new Error('Cloudinary did not return a secure URL');
+      }
+
+      // Step 3: Verify folder (if preset is configured correctly)
+      // Note: Cloudinary folders are virtual - they appear after first upload
+      if (cloudinaryResponse.public_id) {
+        const expectedFolder = 'meetings/';
+        if (!cloudinaryResponse.public_id.startsWith(expectedFolder.replace('/', ''))) {
+          console.warn(
+            `[Cloudinary] Warning: File may not be in expected folder.`,
+            `Expected: ${expectedFolder}, Got public_id: ${cloudinaryResponse.public_id}`,
+            `Make sure upload preset "${CLOUDINARY_UPLOAD_PRESET}" has folder set to "meetings"`
+          );
         }
-      }, 400);
+      }
+
+      // Step 4: Save to Firestore
+      console.log('[Upload] Saving to Firestore...');
+      const meetingId = await saveToFirestore(cloudinaryResponse.secure_url, file.name);
+
+      console.log('[Upload] Complete! Meeting ID:', meetingId);
+      setProgress(100);
+      setSuccess(true);
+      setUploading(false);
+
+      // Redirect after showing success message
+      setTimeout(() => navigate('/meetings'), 2000);
 
     } catch (err) {
-      setError('Upload failed. Please check your network and try again.');
+      console.error('[Upload] Error:', err);
+      setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       setUploading(false);
+      setProgress(0);
     }
   };
 

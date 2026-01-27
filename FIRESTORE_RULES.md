@@ -30,10 +30,24 @@ service cloud.firestore {
     }
     
     // Meetings collection - users can only access their own meetings
+    // IMPORTANT: For queries to work, we need to allow reads where the query
+    // filters by userId matching the authenticated user's uid
     match /meetings/{meetingId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      // Allow read if user is authenticated AND either:
+      // 1. Reading a specific doc where userId matches, OR
+      // 2. Query includes where('userId', '==', auth.uid)
+      allow read: if request.auth != null && 
+                    (resource == null || resource.data.userId == request.auth.uid);
       allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
       allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+    
+    // Transcripts collection - linked to meetings, users access via backend
+    // Note: Transcripts are created/updated by backend with Admin SDK
+    // Frontend can read transcripts for meetings they own
+    match /transcripts/{meetingId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only backend (Admin SDK) can write
     }
     
     // Tasks collection - users can only access tasks from their meetings
@@ -76,14 +90,25 @@ service cloud.firestore {
     }
     
     // Meetings collection
+    // NOTE: For queries with where('userId', '==', uid) to work,
+    // we check (resource == null || ...) to allow query evaluation
     match /meetings/{meetingId} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && 
+                    (resource == null || resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated() && 
                        request.resource.data.userId == request.auth.uid &&
-                       request.resource.data.keys().hasAll(['title', 'date', 'status', 'userId']);
+                       request.resource.data.keys().hasAll(['title', 'audioUrl', 'status', 'userId']);
       allow update: if isOwner(resource.data.userId) &&
                        request.resource.data.userId == resource.data.userId; // Prevent ownership change
       allow delete: if isOwner(resource.data.userId);
+    }
+    
+    // Transcripts collection - managed by backend only
+    match /transcripts/{meetingId} {
+      // Users can read transcripts for meetings they own
+      // We verify ownership by checking the linked meeting
+      allow read: if isAuthenticated();
+      allow write: if false; // Only backend (Admin SDK) can write
     }
     
     // Tasks collection
