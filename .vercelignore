@@ -1,0 +1,27 @@
+# Dependencies
+node_modules
+
+# Development files
+*.md
+.git
+.gitignore
+.env.local
+.env.*.local
+
+# Source maps
+*.map
+
+# Test files
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__
+
+# IDE
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
