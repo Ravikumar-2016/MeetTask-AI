@@ -12,7 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus } from '../types';
+import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping } from '../types';
 import { getStatusBadgeClass } from '../hooks/useMeetings';
 
 /**
@@ -46,6 +46,11 @@ const MeetingDetailsPage: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Speaker diarization state
+  const [utterances, setUtterances] = useState<SpeakerUtterance[]>([]);
+  const [speakerMapping, setSpeakerMapping] = useState<SpeakerMapping>({});
+  const [showSpeakerView, setShowSpeakerView] = useState(true);
 
   // Fetch meeting details
   useEffect(() => {
@@ -132,7 +137,16 @@ const MeetingDetailsPage: React.FC = () => {
         if (transcriptSnap.exists()) {
           const data = transcriptSnap.data();
           setTranscript(data.text || '');
-          console.log('[MeetingDetails] Transcript loaded');
+          
+          // Load speaker diarization data
+          if (data.utterances) {
+            setUtterances(data.utterances);
+          }
+          if (data.speakerMapping) {
+            setSpeakerMapping(data.speakerMapping);
+          }
+          
+          console.log('[MeetingDetails] Transcript loaded with', data.utterances?.length || 0, 'utterances');
         }
       } catch (err) {
         console.error('[MeetingDetails] Error fetching transcript:', err);
@@ -167,10 +181,15 @@ const MeetingDetailsPage: React.FC = () => {
             userId: data.userId,
             title: data.title || 'Untitled Task',
             description: data.description || '',
-            owner: data.owner || 'Unassigned',
-            deadline: data.deadline || '',
+            owner: data.assignedTo || data.owner || 'Unassigned',
+            deadline: data.dueDate || data.deadline || '',
             priority: (data.priority as TaskPriority) || 'medium',
             status: (data.status as TaskStatus) || 'pending',
+            // New speaker assignment fields
+            assignedTo: data.assignedTo || 'Unassigned',
+            confidence: data.confidence,
+            sourceSentence: data.sourceSentence || '',
+            completed: data.completed || false,
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
           });
         });
@@ -281,43 +300,116 @@ const MeetingDetailsPage: React.FC = () => {
                 </div>
               ) : (
                 tasks.map((task) => (
-                  <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-start justify-between">
-                    <div className="flex items-start space-x-4">
-                      <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
-                        task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
-                      }`}>
-                        {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
-                      </button>
-                      <div>
-                        <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
-                        <div className="flex flex-wrap gap-4 mt-2">
-                          <div className="flex items-center text-sm text-slate-500">
-                            <span className="material-icons text-[14px] mr-1">person</span> {task.owner}
-                          </div>
-                          {task.deadline && (
-                            <div className="flex items-center text-sm text-slate-500">
-                              <span className="material-icons text-[14px] mr-1">event</span> {task.deadline}
-                            </div>
+                  <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start space-x-4">
+                        <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
+                          task.status === 'completed' || task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
+                        }`}>
+                          {(task.status === 'completed' || task.completed) && <span className="material-icons text-xs">check</span>}
+                        </button>
+                        <div>
+                          <h4 className={`font-bold text-lg ${task.status === 'completed' || task.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
+                          {task.description && (
+                            <p className="text-slate-600 text-sm mt-1">{task.description}</p>
                           )}
-                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                            task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-slate-50 text-slate-600 border border-slate-100'
-                          }`}>
-                            {task.priority} Priority
-                          </span>
+                          <div className="flex flex-wrap gap-4 mt-2">
+                            <div className="flex items-center text-sm text-slate-500">
+                              <span className="material-icons text-[14px] mr-1">person</span> 
+                              {task.assignedTo || task.owner}
+                              {task.confidence && task.confidence >= 0.8 && (
+                                <span className="ml-1 text-emerald-500" title={`${Math.round(task.confidence * 100)}% confident`}>✓</span>
+                              )}
+                            </div>
+                            {task.deadline && task.deadline !== 'No deadline' && (
+                              <div className="flex items-center text-sm text-slate-500">
+                                <span className="material-icons text-[14px] mr-1">event</span> {task.deadline}
+                              </div>
+                            )}
+                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                              task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 
+                              task.priority === 'low' ? 'bg-slate-50 text-slate-500 border border-slate-100' :
+                              'bg-amber-50 text-amber-600 border border-amber-100'
+                            }`}>
+                              {task.priority} Priority
+                            </span>
+                          </div>
                         </div>
                       </div>
+                      <button className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-50">
+                        <span className="material-icons">more_vert</span>
+                      </button>
                     </div>
-                    <button className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-50">
-                      <span className="material-icons">more_vert</span>
-                    </button>
+                    {/* Source sentence if available */}
+                    {task.sourceSentence && (
+                      <div className="mt-3 pt-3 border-t border-slate-100">
+                        <p className="text-xs text-slate-400 italic">
+                          <span className="material-icons text-[12px] mr-1 align-middle">format_quote</span>
+                          "{task.sourceSentence}"
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
             </div>
           ) : (
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
+            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
               {transcript ? (
-                transcript
+                <div>
+                  {/* Toggle for speaker view */}
+                  {utterances.length > 0 && (
+                    <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
+                      <div className="flex items-center text-sm text-slate-500">
+                        <span className="material-icons text-[16px] mr-2">people</span>
+                        {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
+                      </div>
+                      <button
+                        onClick={() => setShowSpeakerView(!showSpeakerView)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
+                          showSpeakerView 
+                            ? 'bg-indigo-100 text-indigo-700' 
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {showSpeakerView ? 'Speaker View' : 'Plain Text'}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Transcript content */}
+                  {showSpeakerView && utterances.length > 0 ? (
+                    <div className="space-y-4">
+                      {utterances.map((utterance, idx) => {
+                        const speakerName = speakerMapping[utterance.speaker] || `Speaker ${utterance.speaker}`;
+                        const speakerColors: { [key: string]: string } = {
+                          'A': 'bg-blue-50 border-blue-200 text-blue-700',
+                          'B': 'bg-emerald-50 border-emerald-200 text-emerald-700',
+                          'C': 'bg-purple-50 border-purple-200 text-purple-700',
+                          'D': 'bg-amber-50 border-amber-200 text-amber-700',
+                          'E': 'bg-rose-50 border-rose-200 text-rose-700',
+                        };
+                        const colorClass = speakerColors[utterance.speaker] || 'bg-slate-50 border-slate-200 text-slate-700';
+                        
+                        return (
+                          <div key={idx} className={`p-4 rounded-lg border ${colorClass}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-bold text-sm">
+                                {speakerName}
+                              </span>
+                              <span className="text-xs opacity-60">
+                                {Math.floor(utterance.start / 60000)}:{String(Math.floor((utterance.start % 60000) / 1000)).padStart(2, '0')}
+                              </span>
+                            </div>
+                            <p className="text-slate-700 leading-relaxed">{utterance.text}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="leading-relaxed text-slate-700 whitespace-pre-wrap">{transcript}</p>
+                  )}
+                </div>
               ) : (
                 <div className="text-center py-8">
                   <span className="material-icons text-slate-300 text-5xl mb-4">description</span>
@@ -364,12 +456,60 @@ const MeetingDetailsPage: React.FC = () => {
                 <span className="text-slate-500">Tasks</span>
                 <span className="font-bold">{tasks.length}</span>
               </div>
+              {Object.keys(speakerMapping).length > 0 && (
+                <div className="flex justify-between text-sm py-2 border-b border-slate-100">
+                  <span className="text-slate-500">Speakers</span>
+                  <span className="font-bold">{Object.keys(speakerMapping).length}</span>
+                </div>
+              )}
+              {meeting.duration && meeting.duration > 0 && (
+                <div className="flex justify-between text-sm py-2 border-b border-slate-100">
+                  <span className="text-slate-500">Duration</span>
+                  <span className="font-bold">{Math.floor(meeting.duration / 60)}:{String(Math.floor(meeting.duration % 60)).padStart(2, '0')}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm py-2 border-b border-slate-100">
                 <span className="text-slate-500">Status</span>
                 <span className="font-bold capitalize">{meeting.status}</span>
               </div>
             </div>
           </div>
+
+          {/* Speaker List */}
+          {Object.keys(speakerMapping).length > 0 && (
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-lg mb-4">Participants</h3>
+              <div className="space-y-2">
+                {Object.entries(speakerMapping).map(([id, name]) => {
+                  const speakerColors: { [key: string]: string } = {
+                    'A': 'bg-blue-100 text-blue-700',
+                    'B': 'bg-emerald-100 text-emerald-700',
+                    'C': 'bg-purple-100 text-purple-700',
+                    'D': 'bg-amber-100 text-amber-700',
+                    'E': 'bg-rose-100 text-rose-700',
+                  };
+                  const colorClass = speakerColors[id] || 'bg-slate-100 text-slate-700';
+                  const taskCount = tasks.filter(t => t.assignedTo === name || t.owner === name).length;
+                  
+                  return (
+                    <div key={id} className="flex items-center justify-between py-2">
+                      <div className="flex items-center">
+                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${colorClass}`}>
+                          {id}
+                        </span>
+                        <span className="font-medium text-slate-700">{name}</span>
+                      </div>
+                      {taskCount > 0 && (
+                        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
+                          {taskCount} task{taskCount !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-2xl">
              <h3 className="font-bold text-indigo-900 mb-2">Automated Next Steps</h3>

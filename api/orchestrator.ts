@@ -89,6 +89,8 @@ interface ExtractedTask {
   assignedTo: string;
   dueDate: string;
   priority: 'high' | 'medium' | 'low';
+  confidence?: number;        // 0.0 - 1.0 confidence in assignment
+  sourceSentence?: string;    // Original quote from transcript
 }
 
 interface MeetingDoc {
@@ -103,17 +105,42 @@ interface MeetingDoc {
 type FileType = 'audio' | 'video' | 'image';
 
 // ============================================
-// ASSEMBLYAI TRANSCRIPTION
+// SPEAKER TYPES
 // ============================================
 
-async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: string; confidence: number; duration: number; transcriptId: string }> {
+interface SpeakerUtterance {
+  speaker: string;       // "A", "B", "C", etc.
+  text: string;
+  start: number;         // milliseconds
+  end: number;
+  confidence: number;
+}
+
+interface SpeakerMapping {
+  [speakerId: string]: string;  // "A" -> "John" or "Speaker A"
+}
+
+interface TranscriptionResult {
+  text: string;
+  confidence: number;
+  duration: number;
+  transcriptId: string;
+  utterances: SpeakerUtterance[];
+  speakerMapping: SpeakerMapping;
+}
+
+// ============================================
+// ASSEMBLYAI TRANSCRIPTION WITH SPEAKER DIARIZATION
+// ============================================
+
+async function transcribeWithAssemblyAI(mediaUrl: string): Promise<TranscriptionResult> {
   const apiKey = process.env.ASSEMBLYAI_API_KEY;
   if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
 
-  console.log('🎤 [AssemblyAI] Starting transcription...');
+  console.log('🎤 [AssemblyAI] Starting transcription with speaker diarization...');
   console.log('📁 [AssemblyAI] Media URL:', mediaUrl.substring(0, 50) + '...');
 
-  // Step 1: Submit transcription request
+  // Step 1: Submit transcription request WITH speaker labels
   const submitRes = await fetch('https://api.assemblyai.com/v2/transcript', {
     method: 'POST',
     headers: {
@@ -123,6 +150,7 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
     body: JSON.stringify({
       audio_url: mediaUrl,
       language_detection: true,
+      speaker_labels: true,  // Enable speaker diarization
     }),
   });
 
@@ -136,11 +164,12 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
   console.log('📝 [AssemblyAI] Transcript ID:', transcriptId);
 
   // Step 2: Poll for completion (max 5 minutes)
-  const maxAttempts = 60; // 60 * 5s = 5 minutes
+  const maxAttempts = 60;
   let attempts = 0;
+  let pollData: any = null;
 
   while (attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
       headers: { 'Authorization': apiKey },
@@ -150,17 +179,11 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
       throw new Error(`AssemblyAI poll error: ${pollRes.status}`);
     }
 
-    const pollData = await pollRes.json();
+    pollData = await pollRes.json();
     console.log('⏳ [AssemblyAI] Status:', pollData.status, `(attempt ${attempts + 1})`);
 
     if (pollData.status === 'completed') {
-      console.log('✅ [AssemblyAI] Transcription complete!');
-      return {
-        text: pollData.text || '',
-        confidence: pollData.confidence || 0,
-        duration: pollData.audio_duration || 0,
-        transcriptId: transcriptId,
-      };
+      break;
     }
 
     if (pollData.status === 'error') {
@@ -170,18 +193,98 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
     attempts++;
   }
 
-  throw new Error('AssemblyAI transcription timed out after 5 minutes');
+  if (!pollData || pollData.status !== 'completed') {
+    throw new Error('AssemblyAI transcription timed out');
+  }
+
+  console.log('✅ [AssemblyAI] Transcription complete!');
+
+  // Step 3: Extract speaker utterances
+  const utterances: SpeakerUtterance[] = (pollData.utterances || []).map((u: any) => ({
+    speaker: u.speaker || 'A',
+    text: u.text || '',
+    start: u.start || 0,
+    end: u.end || 0,
+    confidence: u.confidence || 0,
+  }));
+
+  console.log('👥 [AssemblyAI] Found', utterances.length, 'utterances');
+
+  // Step 4: Map speaker IDs to names (if mentioned)
+  const speakerMapping = mapSpeakersToNames(pollData.text || '', utterances);
+  console.log('🏷️ [AssemblyAI] Speaker mapping:', speakerMapping);
+
+  return {
+    text: pollData.text || '',
+    confidence: pollData.confidence || 0,
+    duration: pollData.audio_duration || 0,
+    transcriptId,
+    utterances,
+    speakerMapping,
+  };
 }
 
 // ============================================
-// ASSEMBLYAI LEMUR - Summary & Task Extraction
+// SPEAKER NAME MAPPING
+// Attempts to find real names mentioned in transcript
 // ============================================
 
-async function extractSummaryWithLemur(transcriptId: string, meetingTitle: string): Promise<{ summary: string; tasks: ExtractedTask[] }> {
+function mapSpeakersToNames(fullText: string, utterances: SpeakerUtterance[]): SpeakerMapping {
+  const mapping: SpeakerMapping = {};
+  const uniqueSpeakers = [...new Set(utterances.map(u => u.speaker))];
+  
+  // Common patterns for name introductions
+  const namePatterns = [
+    /(?:I'm|I am|my name is|this is|hey,? it's|hi,? I'm)\s+([A-Z][a-z]+)/gi,
+    /([A-Z][a-z]+)\s+(?:here|speaking)/gi,
+  ];
+
+  // Try to find names in the first few utterances of each speaker
+  for (const speakerId of uniqueSpeakers) {
+    const speakerUtterances = utterances.filter(u => u.speaker === speakerId);
+    const firstFewTexts = speakerUtterances.slice(0, 3).map(u => u.text).join(' ');
+    
+    let foundName: string | null = null;
+    
+    for (const pattern of namePatterns) {
+      const match = pattern.exec(firstFewTexts);
+      if (match && match[1]) {
+        // Validate it looks like a name (not a common word)
+        const possibleName = match[1];
+        const commonWords = ['the', 'this', 'that', 'here', 'there', 'just', 'well'];
+        if (!commonWords.includes(possibleName.toLowerCase()) && possibleName.length >= 2) {
+          foundName = possibleName;
+          break;
+        }
+      }
+      pattern.lastIndex = 0; // Reset regex
+    }
+    
+    // Use found name or default to "Speaker X"
+    mapping[speakerId] = foundName || `Speaker ${speakerId}`;
+  }
+  
+  return mapping;
+}
+
+// ============================================
+// ASSEMBLYAI LEMUR - Summary & Task Extraction with Speakers
+// ============================================
+
+async function extractSummaryWithLemur(
+  transcriptId: string, 
+  meetingTitle: string,
+  speakerMapping: SpeakerMapping
+): Promise<{ summary: string; tasks: ExtractedTask[] }> {
   const apiKey = process.env.ASSEMBLYAI_API_KEY;
   if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
 
   console.log('🤖 [AssemblyAI LeMUR] Extracting summary & tasks...');
+
+  // Build speaker context for the AI
+  const speakerList = Object.entries(speakerMapping)
+    .map(([id, name]) => `Speaker ${id} = ${name}`)
+    .join(', ');
 
   // Use LeMUR for summary
   const summaryRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/summary', {
@@ -192,8 +295,8 @@ async function extractSummaryWithLemur(transcriptId: string, meetingTitle: strin
     },
     body: JSON.stringify({
       transcript_ids: [transcriptId],
-      context: `Meeting title: ${meetingTitle}`,
-      answer_format: 'A concise 2-4 sentence summary of the main discussion points.',
+      context: `Meeting title: ${meetingTitle}. Speakers identified: ${speakerList || 'Unknown'}`,
+      answer_format: 'A concise 2-4 sentence summary of the main discussion points, mentioning who said what when relevant.',
     }),
   });
 
@@ -206,7 +309,7 @@ async function extractSummaryWithLemur(transcriptId: string, meetingTitle: strin
     console.log('⚠️ [LeMUR] Summary failed, using default');
   }
 
-  // Use LeMUR for task extraction
+  // Use LeMUR for task extraction WITH speaker assignment
   const tasksRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
     method: 'POST',
     headers: {
@@ -215,17 +318,27 @@ async function extractSummaryWithLemur(transcriptId: string, meetingTitle: strin
     },
     body: JSON.stringify({
       transcript_ids: [transcriptId],
-      prompt: `Extract all action items and tasks from this meeting transcript.
-For each task, provide:
-- title: A clear, actionable task title
-- description: Brief context
-- assignedTo: Person responsible (or "Unassigned" if unclear)
-- dueDate: Deadline if mentioned (format: YYYY-MM-DD) or "No deadline"
-- priority: high, medium, or low
+      prompt: `You are analyzing a meeting transcript with multiple speakers.
+Speakers identified: ${speakerList || 'Unknown speakers'}
 
-Return ONLY a JSON array of tasks. If no tasks found, return empty array [].
-Example format:
-[{"title":"Review proposal","description":"Review Q1 budget proposal","assignedTo":"John","dueDate":"2026-02-01","priority":"high"}]`,
+Extract all action items and tasks. Pay close attention to WHO is assigned each task.
+Look for patterns like:
+- "I'll handle...", "I will...", "I'm going to..." (self-assignment by the speaker)
+- "Can you...", "[Name], could you...", "You should..." (assignment to another person)
+- "[Name] will...", "[Name] is responsible for..." (explicit assignment)
+
+For each task, provide:
+- title: A clear, actionable task title (max 10 words)
+- description: Brief context about what needs to be done
+- assignedTo: The person's name who should do this task. Use actual names if mentioned, otherwise use "Speaker A", "Speaker B", etc. Use "Unassigned" only if truly unclear.
+- dueDate: Deadline if mentioned (format: YYYY-MM-DD) or "No deadline"
+- priority: high, medium, or low based on urgency language
+- confidence: A number 0.0-1.0 indicating how confident you are about this task and its assignment
+- sourceSentence: The exact quote from the transcript where this task was mentioned
+
+Return ONLY a valid JSON array. If no tasks found, return [].
+Example:
+[{"title":"Review proposal","description":"Review the Q1 budget proposal document","assignedTo":"John","dueDate":"2026-02-01","priority":"high","confidence":0.9,"sourceSentence":"John, can you review the Q1 budget proposal by next Monday?"}]`,
     }),
   });
 
@@ -233,20 +346,31 @@ Example format:
   if (tasksRes.ok) {
     const tasksData = await tasksRes.json();
     const responseText = tasksData.response || '[]';
-    console.log('📋 [LeMUR] Tasks response:', responseText.substring(0, 200));
+    console.log('📋 [LeMUR] Tasks response:', responseText.substring(0, 300));
     
     try {
       // Try to extract JSON array from response
       const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        tasks = JSON.parse(jsonMatch[0]);
+        const rawTasks = JSON.parse(jsonMatch[0]);
+        // Normalize task structure
+        tasks = rawTasks.map((t: any) => ({
+          title: t.title || 'Untitled Task',
+          description: t.description || '',
+          assignedTo: t.assignedTo || 'Unassigned',
+          dueDate: t.dueDate || 'No deadline',
+          priority: t.priority || 'medium',
+          confidence: typeof t.confidence === 'number' ? t.confidence : 0.7,
+          sourceSentence: t.sourceSentence || '',
+        }));
         console.log('✅ [LeMUR] Tasks extracted:', tasks.length);
       }
     } catch (e) {
       console.log('⚠️ [LeMUR] Could not parse tasks, continuing without tasks');
     }
   } else {
-    console.log('⚠️ [LeMUR] Tasks extraction failed');
+    const errText = await tasksRes.text();
+    console.log('⚠️ [LeMUR] Tasks extraction failed:', errText);
   }
 
   return { summary, tasks };
@@ -285,7 +409,17 @@ function extractSimpleSummaryAndTasks(transcript: string, meetingTitle: string):
 // MAIN PIPELINE
 // ============================================
 
-async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: string) {
+interface PipelineResult {
+  transcript: string;
+  confidence: number;
+  duration: number;
+  summary: string;
+  tasks: ExtractedTask[];
+  utterances: SpeakerUtterance[];
+  speakerMapping: SpeakerMapping;
+}
+
+async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: string): Promise<PipelineResult> {
   console.log('🚀 [Pipeline] Starting for:', meetingTitle);
   console.log('📁 [Pipeline] File type:', fileType);
 
@@ -294,6 +428,8 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
   let duration = 0;
   let summary = '';
   let tasks: ExtractedTask[] = [];
+  let utterances: SpeakerUtterance[] = [];
+  let speakerMapping: SpeakerMapping = {};
 
   // Step 1: Get transcript based on file type
   if (fileType === 'image') {
@@ -304,15 +440,19 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     summary = extraction.summary;
     tasks = extraction.tasks;
   } else {
-    // Audio or Video - use AssemblyAI
+    // Audio or Video - use AssemblyAI with speaker diarization
     const result = await transcribeWithAssemblyAI(fileUrl);
     transcript = result.text;
     confidence = result.confidence;
     duration = result.duration;
+    utterances = result.utterances;
+    speakerMapping = result.speakerMapping;
     
-    // Use AssemblyAI LeMUR for summary & tasks
+    console.log('👥 [Pipeline] Speakers found:', Object.keys(speakerMapping).length);
+    
+    // Use AssemblyAI LeMUR for summary & tasks WITH speaker info
     if (result.transcriptId && transcript.length > 10) {
-      const extraction = await extractSummaryWithLemur(result.transcriptId, meetingTitle);
+      const extraction = await extractSummaryWithLemur(result.transcriptId, meetingTitle, speakerMapping);
       summary = extraction.summary;
       tasks = extraction.tasks;
     } else {
@@ -333,6 +473,8 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     duration,
     summary,
     tasks,
+    utterances,
+    speakerMapping,
   };
 }
 
@@ -421,7 +563,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     // Run AI pipeline
     const result = await runPipeline(fileUrl, fileType, meeting.title || 'Untitled');
 
-    // Save transcript
+    // Save transcript WITH speaker segments
     await db.collection('transcripts').doc(meetingId).set({
       meetingId,
       userId: user.uid,
@@ -430,11 +572,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       confidence: result.confidence,
       duration: result.duration,
       wordCount: result.transcript.split(/\s+/).length,
+      // Speaker diarization data
+      utterances: result.utterances,
+      speakerMapping: result.speakerMapping,
+      speakerCount: Object.keys(result.speakerMapping).length,
       createdAt: FieldValue.serverTimestamp(),
     });
-    console.log('💾 Transcript saved');
+    console.log('💾 Transcript saved with', result.utterances.length, 'utterances');
 
-    // Save tasks
+    // Save tasks WITH speaker assignment details
     if (result.tasks.length > 0) {
       const batch = db.batch();
       for (const task of result.tasks) {
@@ -448,6 +594,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
           assignedTo: task.assignedTo || 'Unassigned',
           dueDate: task.dueDate || 'No deadline',
           priority: task.priority || 'medium',
+          confidence: task.confidence || 0.7,
+          sourceSentence: task.sourceSentence || '',
           completed: false,
           createdAt: FieldValue.serverTimestamp(),
         });
@@ -456,12 +604,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
       console.log('💾 Tasks saved:', result.tasks.length);
     }
 
-    // Update meeting to completed
+    // Update meeting to completed WITH speaker info
     await meetingRef.update({
       status: 'completed',
       taskCount: result.tasks.length,
       summary: result.summary.substring(0, 500),
       duration: result.duration,
+      speakerCount: Object.keys(result.speakerMapping).length,
+      speakers: Object.values(result.speakerMapping),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
