@@ -22,16 +22,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ============================================
-// GEMINI MODEL CONSTANTS
+// GEMINI CONFIG (using official SDK)
 // ============================================
-const GEMINI_MODELS = {
-  TEXT: 'models/gemini-1.5-pro',           // For text-only tasks (task extraction)
-  VISION: 'models/gemini-1.5-pro-vision',  // For image OCR (not used here)
-} as const;
-
-const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_MODEL = 'gemini-1.5-flash'; // Works on free tier, fast, reliable
 
 // ============================================
 // FIREBASE ADMIN SETUP
@@ -138,7 +134,7 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// TASK EXTRACTION WITH GEMINI (Primary & Only Method)
+// TASK EXTRACTION WITH GEMINI (Official SDK)
 // ============================================
 async function extractTasksWithGemini(
   transcriptText: string,
@@ -152,7 +148,8 @@ async function extractTasksWithGemini(
     return [];
   }
   
-  console.log('🤖 Gemini: Extracting tasks...');
+  console.log('🤖 Gemini: Extracting tasks using official SDK...');
+  console.log('🔧 Gemini: Model:', GEMINI_MODEL);
   console.log('🗺️ Gemini: Speaker mapping:', speakerMapping);
   
   // Build speaker info for prompt
@@ -166,7 +163,7 @@ async function extractTasksWithGemini(
 
   console.log('👥 Gemini: Speaker info:\n', speakerInfo);
 
-  // Truncate transcript to fit context window (leave room for prompt)
+  // Truncate transcript to fit context window
   const maxTranscriptLength = 25000;
   const truncatedTranscript = transcriptText.length > maxTranscriptLength 
     ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
@@ -207,85 +204,43 @@ IMPORTANT RULES:
 2. Match tasks to the correct speaker using the mapping above
 3. Never invent tasks that weren't discussed
 4. If no clear tasks are found, return an empty array []
-5. Return ONLY valid JSON - no markdown, no explanations
+5. Return ONLY valid JSON array - no markdown, no explanations
 
 Return your response as a JSON array of task objects:`;
 
   try {
-    console.log('📤 Gemini: Sending request...');
-    console.log('🔧 Gemini: Model:', GEMINI_MODELS.TEXT);
+    console.log('📤 Gemini: Sending request via SDK...');
     
-    const endpoint = `${GEMINI_API_BASE}/${GEMINI_MODELS.TEXT}:generateContent?key=${apiKey}`;
+    // Initialize Gemini client with official SDK
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: prompt }]
-        }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 4096,
-        },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-        ],
-      }),
-    });
-
-    console.log('📥 Gemini: Response status:', res.status);
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error('❌ Gemini API error:', res.status);
-      console.error('❌ Model:', GEMINI_MODELS.TEXT);
-      console.error('❌ Endpoint:', endpoint.replace(apiKey, 'API_KEY_HIDDEN'));
-      console.error('❌ Response:', errorText);
-      return [];
-    }
-
-    const data = await res.json();
+    // Generate content
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const content = response.text();
     
-    // Extract text from Gemini response
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     console.log('📄 Gemini response (first 500 chars):', content.substring(0, 500));
 
     // Parse JSON from response
     let tasks: any[] = [];
     try {
-      // Try direct parse first (since we requested JSON mime type)
-      tasks = JSON.parse(content);
-      
-      // If not an array, try to find array in response
-      if (!Array.isArray(tasks)) {
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          tasks = JSON.parse(jsonMatch[0]);
-        } else {
+      // Try to find JSON array in response
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        tasks = JSON.parse(jsonMatch[0]);
+        console.log('✅ Gemini: Parsed', tasks.length, 'tasks');
+      } else {
+        // Try direct parse
+        tasks = JSON.parse(content);
+        if (!Array.isArray(tasks)) {
           console.warn('⚠️ Gemini: Response is not an array');
           tasks = [];
         }
       }
-      
-      console.log('✅ Gemini: Parsed', tasks.length, 'tasks');
     } catch (parseError: any) {
       console.error('❌ Failed to parse Gemini response:', parseError.message);
-      // Try to find JSON array in response as fallback
-      try {
-        const jsonMatch = content.match(/\[[\s\S]*?\]/);
-        if (jsonMatch) {
-          tasks = JSON.parse(jsonMatch[0]);
-          console.log('✅ Gemini: Recovered', tasks.length, 'tasks from partial response');
-        }
-      } catch {
-        console.error('❌ Could not recover JSON from response');
-      }
+      console.log('📄 Raw response:', content);
     }
 
     return Array.isArray(tasks) ? tasks : [];
