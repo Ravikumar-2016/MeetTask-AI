@@ -49,6 +49,11 @@ const MeetingDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
+  // Image/PDF summary state
+  const [summary, setSummary] = useState<string>('');
+  const [keyPoints, setKeyPoints] = useState<string[]>([]);
+  const [isImageOrPdf, setIsImageOrPdf] = useState(false);
+  
   // Speaker diarization state
   const [utterances, setUtterances] = useState<SpeakerUtterance[]>([]);
   const [speakerMapping, setSpeakerMapping] = useState<SpeakerMapping>({});
@@ -121,8 +126,18 @@ const MeetingDetailsPage: React.FC = () => {
           errorMessage: data.errorMessage,
           createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
         };
+        
+        // Check if this is an image/PDF file
+        const isImgPdf = data.fileType === 'image' || data.fileType === 'pdf';
+        setIsImageOrPdf(isImgPdf);
+        
+        // Load summary and key points for image/PDF files
+        if (isImgPdf && data.summary) {
+          setSummary(data.summary);
+          setKeyPoints(data.keyPoints || []);
+        }
 
-        console.log('[MeetingDetails] Meeting loaded:', meetingData.title);
+        console.log('[MeetingDetails] Meeting loaded:', meetingData.title, 'isImageOrPdf:', isImgPdf);
         setMeeting(meetingData);
         setLoading(false);
       } catch (err) {
@@ -420,6 +435,84 @@ const MeetingDetailsPage: React.FC = () => {
 
       <div className="grid lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
+          {/* For Image/PDF: Show Summary view (no tabs needed) */}
+          {isImageOrPdf ? (
+            <div className="space-y-6">
+              {/* Summary Card */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                    <span className="material-icons text-indigo-600">
+                      {meeting.fileType === 'pdf' ? 'picture_as_pdf' : 'image'}
+                    </span>
+                  </span>
+                  <div>
+                    <h3 className="font-bold text-lg text-slate-900">
+                      {meeting.fileType === 'pdf' ? 'PDF' : 'Image'} Analysis
+                    </h3>
+                    <p className="text-sm text-slate-500">AI-generated summary</p>
+                  </div>
+                </div>
+                
+                {summary ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-50 rounded-xl">
+                      <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center">
+                        <span className="material-icons text-[16px] mr-2 text-indigo-500">summarize</span>
+                        Summary
+                      </h4>
+                      <p className="text-slate-700 leading-relaxed">{summary}</p>
+                    </div>
+                    
+                    {keyPoints.length > 0 && (
+                      <div className="p-4 bg-emerald-50 rounded-xl">
+                        <h4 className="font-bold text-sm text-emerald-700 mb-3 flex items-center">
+                          <span className="material-icons text-[16px] mr-2">checklist</span>
+                          Key Points
+                        </h4>
+                        <ul className="space-y-2">
+                          {keyPoints.map((point, idx) => (
+                            <li key={idx} className="flex items-start gap-2 text-slate-700">
+                              <span className="w-5 h-5 bg-emerald-200 text-emerald-800 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">
+                                {idx + 1}
+                              </span>
+                              <span>{point}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <span className="material-icons text-slate-300 text-5xl mb-4">
+                      {meeting.fileType === 'pdf' ? 'picture_as_pdf' : 'image'}
+                    </span>
+                    <h3 className="font-bold text-slate-900 mb-2">Processing...</h3>
+                    <p className="text-slate-500">
+                      {meeting.status === 'completed' 
+                        ? 'No summary available for this file'
+                        : 'Summary will appear here after processing completes'}
+                    </p>
+                  </div>
+                )}
+              </div>
+              
+              {/* Note about task tracking */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                <span className="material-icons text-amber-500 mt-0.5">info</span>
+                <div>
+                  <p className="text-sm text-amber-800 font-medium">Task tracking not available</p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Task extraction and assignment is only available for audio/video files. 
+                    Images and PDFs show AI-generated summaries instead.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* For Audio/Video: Show tabs for Action Items and Transcript */
+            <>
           <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl w-fit">
             <button
               onClick={() => setActiveTab('tasks')}
@@ -583,6 +676,8 @@ const MeetingDetailsPage: React.FC = () => {
                 </div>
               )}
             </div>
+          )}
+          </>
           )}
         </div>
 

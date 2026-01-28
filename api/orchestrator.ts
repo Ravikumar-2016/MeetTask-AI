@@ -98,35 +98,37 @@ interface MeetingDoc {
 }
 
 // ============================================
-// GEMINI VISION OCR
+// GEMINI VISION - SIMPLE IMAGE/PDF SUMMARIZER
+// Uses REST API directly for better reliability
 // ============================================
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-async function extractTextWithGemini(fileUrl: string, fileType: 'image' | 'pdf'): Promise<string> {
+async function summarizeImageOrPdf(fileUrl: string, fileType: 'image' | 'pdf'): Promise<{ summary: string; keyPoints: string[] }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY not configured');
   }
 
-  console.log('🔮 [Gemini] Starting OCR for:', fileType);
-  const genAI = new GoogleGenerativeAI(apiKey);
+  console.log('🔮 [Gemini] Summarizing:', fileType);
   
-  // PDF files cannot be directly processed by Gemini Vision - need image conversion
+  // PDF files cannot be directly processed - return a helpful message
   if (fileType === 'pdf') {
-    console.log('⚠️ [Gemini] PDF files require conversion to images first');
-    return 'PDF text extraction is not yet supported. Please convert your PDF to an image (screenshot or export as PNG/JPG) and upload the image instead.';
+    console.log('⚠️ [Gemini] PDF direct processing not supported');
+    return {
+      summary: 'PDF files cannot be processed directly. Please convert your PDF to an image (screenshot or export as PNG/JPG) and upload the image instead.',
+      keyPoints: ['Convert PDF to image format (PNG/JPG)', 'Take a screenshot of each page', 'Upload images separately']
+    };
   }
 
   // Fetch the image from Cloudinary
   console.log('📥 [Gemini] Fetching image from:', fileUrl.substring(0, 80) + '...');
   
-  const response = await fetch(fileUrl);
+  const fetchResponse = await fetch(fileUrl);
   
-  if (!response.ok) {
-    throw new Error(`Failed to fetch file: ${response.status}`);
+  if (!fetchResponse.ok) {
+    throw new Error(`Failed to fetch file: ${fetchResponse.status}`);
   }
 
-  const buffer = await response.arrayBuffer();
+  const buffer = await fetchResponse.arrayBuffer();
   const base64Data = Buffer.from(buffer).toString('base64');
   
   // Determine MIME type from URL
@@ -137,21 +139,27 @@ async function extractTextWithGemini(fileUrl: string, fileType: 'image' | 'pdf')
   else if (urlLower.includes('.gif')) mimeType = 'image/gif';
   else if (urlLower.includes('.jpg') || urlLower.includes('.jpeg')) mimeType = 'image/jpeg';
 
-  console.log('🔮 [Gemini] Using MIME type:', mimeType);
-  console.log('🔮 [Gemini] Image size:', Math.round(buffer.byteLength / 1024), 'KB');
+  console.log('🔮 [Gemini] MIME type:', mimeType, 'Size:', Math.round(buffer.byteLength / 1024), 'KB');
 
-  const prompt = `You are an OCR specialist. Extract ALL text from this image exactly as it appears.
+  const prompt = `Analyze this image and provide a helpful summary.
 
-INSTRUCTIONS:
-1. Extract every word, number, and symbol visible in the image
-2. Fix any broken lines or wrapped text - merge them into proper sentences
-3. Preserve paragraph structure with blank lines between paragraphs
-4. If there are speaker names (like "John:", "Manager:", etc.), keep them on their own lines
-5. Do NOT add any commentary, explanations, or descriptions
-6. Do NOT use markdown formatting - just plain text
-7. If there are bullet points or numbered lists, preserve them
+If this is a meeting notes image, whiteboard, document, or screenshot:
+1. Extract and summarize the main content
+2. List key points, action items, or important information
+3. Note any dates, names, or deadlines mentioned
 
-OUTPUT: Return ONLY the extracted text, cleaned and properly formatted.`;
+If this is a general image:
+1. Describe what's shown in the image
+2. Extract any visible text
+3. Note any relevant details
+
+FORMAT YOUR RESPONSE AS JSON:
+{
+  "summary": "A 2-3 sentence summary of the image content",
+  "keyPoints": ["Point 1", "Point 2", "Point 3"]
+}
+
+Return ONLY valid JSON, no other text.`;
 
   const imageData = {
     inlineData: {
@@ -160,37 +168,62 @@ OUTPUT: Return ONLY the extracted text, cleaned and properly formatted.`;
     },
   };
 
-  // Try models in order of preference
-  const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro-vision'];
-  let lastError: Error | null = null;
-
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`🔮 [Gemini] Trying model: ${modelName}`);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent([prompt, imageData]);
-      const extractedText = result.response.text();
-      
-      // Clean the text
-      let cleanedText = extractedText
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/`/g, '')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/-\s*\n\s*/g, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      
-      console.log(`✅ [Gemini] OCR complete with ${modelName}, text length:`, cleanedText.length);
-      return cleanedText;
-    } catch (error: any) {
-      console.log(`⚠️ [Gemini] Model ${modelName} failed:`, error.message);
-      lastError = error;
-      // Continue to next model
+  // Use REST API directly for better reliability
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  
+  const requestBody = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inline_data: { mime_type: mimeType, data: base64Data } }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 1024,
     }
+  };
+
+  console.log('🔮 [Gemini] Calling REST API...');
+  
+  const apiResponse = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    console.error('❌ [Gemini] API error:', apiResponse.status, errorText);
+    throw new Error(`Gemini API error: ${apiResponse.status}`);
   }
 
-  // All models failed
-  throw new Error(`Gemini OCR failed with all models: ${lastError?.message || 'Unknown error'}`);
+  const result = await apiResponse.json();
+  const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  
+  console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
+
+  // Try to parse JSON response
+  try {
+    // Clean up response - remove markdown code blocks if present
+    let cleanJson = responseText
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+    
+    const parsed = JSON.parse(cleanJson);
+    return {
+      summary: parsed.summary || 'Image analyzed successfully.',
+      keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
+    };
+  } catch (parseError) {
+    // If JSON parsing fails, use the raw text as summary
+    console.log('⚠️ [Gemini] JSON parse failed, using raw text');
+    return {
+      summary: responseText.substring(0, 500) || 'Image content extracted.',
+      keyPoints: []
+    };
+  }
 }
 
 // ============================================
@@ -309,12 +342,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('📁 File type:', meeting.fileType || 'unknown');
 
     // ============================================
-    // HANDLE IMAGES & PDFs: Use Gemini Vision OCR
+    // HANDLE IMAGES & PDFs: Simple Summary (No Task Tracking)
     // ============================================
     if (meeting.fileType === 'image' || meeting.fileType === 'pdf') {
       const fileTypeLabel = meeting.fileType === 'pdf' ? 'PDF' : 'Image';
-      console.log(`🖼️ [Orchestrator] ${fileTypeLabel} file detected`);
-      console.log('🔮 [Orchestrator] Using Gemini Vision for OCR...');
+      console.log(`🖼️ [Orchestrator] ${fileTypeLabel} file detected - using simple summary mode`);
       
       // Update status to processing
       await meetingRef.update({
@@ -322,59 +354,51 @@ export default async function handler(request: VercelRequest, response: VercelRe
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      let ocrText = '';
+      let summary = '';
+      let keyPoints: string[] = [];
+      
       try {
-        // Extract text using Gemini Vision API
-        ocrText = await extractTextWithGemini(fileUrl, meeting.fileType as 'image' | 'pdf');
-        console.log('📝 OCR text length:', ocrText.length);
-        console.log('📝 OCR preview:', ocrText.substring(0, 150));
-      } catch (ocrError: any) {
-        console.error('❌ [Orchestrator] OCR failed:', ocrError.message);
-        ocrText = `Text extraction failed: ${ocrError.message}. Please manually review the ${fileTypeLabel.toLowerCase()}.`;
+        // Get summary using Gemini Vision API
+        const result = await summarizeImageOrPdf(fileUrl, meeting.fileType as 'image' | 'pdf');
+        summary = result.summary;
+        keyPoints = result.keyPoints;
+        console.log('📝 Summary:', summary.substring(0, 100));
+        console.log('📝 Key points:', keyPoints.length);
+      } catch (error: any) {
+        console.error('❌ [Orchestrator] Summary failed:', error.message);
+        summary = `Could not analyze ${fileTypeLabel.toLowerCase()}. Error: ${error.message}`;
+        keyPoints = ['Please review the file manually'];
       }
       
-      // Create speakers A, B, C for manual mapping
-      const speakers = ['A', 'B', 'C'];
-      
+      // Mark as COMPLETED immediately (no mapping needed for images/PDFs)
       await meetingRef.update({
-        status: 'needs_mapping',
-        speakers: speakers,
-        speakerCount: speakers.length,
-        ocrText: ocrText,
-        summary: `${fileTypeLabel} processed via Gemini Vision OCR. Please map participants to extract tasks.`,
+        status: 'completed',
+        summary: summary,
+        keyPoints: keyPoints,
+        processingNote: `${fileTypeLabel} analyzed with AI. No task tracking for this file type.`,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Create transcript from OCR text
-      // Assign all text to Speaker A (user can edit mapping later)
-      const formattedTranscript = ocrText.length > 50 
-        ? `Speaker A:\n${ocrText}`
-        : `No readable text could be extracted from this ${fileTypeLabel.toLowerCase()}.\n\nTo extract tasks:\n1. Map speakers A, B, C to participants\n2. Click "Confirm & Extract Tasks"`;
-
+      // Create a simple transcript record (for consistency)
       await db.collection('transcripts').doc(meetingId).set({
         meetingId,
         userId: user.uid,
-        text: ocrText,
-        formattedTranscript,
-        summary: `Text extracted from ${fileTypeLabel.toLowerCase()} via Gemini Vision OCR.`,
-        speakers: speakers,
-        speakerCount: speakers.length,
-        utterances: [
-          { speaker: 'A', text: ocrText || `Content from ${fileTypeLabel.toLowerCase()}`, start: 0, end: 0, confidence: 0.9 },
-          { speaker: 'B', text: '(Additional participant - assign if needed)', start: 0, end: 0, confidence: 0 },
-          { speaker: 'C', text: '(Additional participant - assign if needed)', start: 0, end: 0, confidence: 0 },
-        ],
-        ocrSource: true,
+        text: summary,
+        formattedTranscript: `📋 ${fileTypeLabel} Summary:\n\n${summary}\n\n📌 Key Points:\n${keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n') || 'No specific points extracted.'}`,
+        summary: summary,
+        keyPoints: keyPoints,
+        fileType: meeting.fileType,
+        isImageOrPdf: true,
         createdAt: FieldValue.serverTimestamp(),
       });
 
       return response.status(200).json({
         success: true,
-        message: `${fileTypeLabel} processed - please map speakers to extract tasks`,
+        message: `${fileTypeLabel} analyzed successfully`,
         meetingId,
-        status: 'needs_mapping',
-        speakers: speakers,
-        ocrLength: ocrText.length,
+        status: 'completed',
+        summary: summary,
+        keyPoints: keyPoints,
       });
     }
 
