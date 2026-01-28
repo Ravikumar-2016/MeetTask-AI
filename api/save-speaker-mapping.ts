@@ -468,6 +468,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }
     }
 
+    return response.status(200).json({
       tasks: savedTasks,
       status: 'completed',
     });
