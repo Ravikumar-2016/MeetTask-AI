@@ -123,23 +123,80 @@ export interface Transcript {
 // TASK TYPES
 // ============================================
 
+/**
+ * Task priority levels - for sorting and visual indicators
+ */
+export type TaskPriorityExtended = 'critical' | 'high' | 'medium' | 'low';
+
+/**
+ * Task status for tracking progress
+ */
+export type TaskStatusExtended = 'pending' | 'in_progress' | 'completed' | 'blocked';
+
+/**
+ * Task update entry - for progress tracking
+ */
+export interface TaskUpdate {
+  id: string;
+  taskId: string;
+  userId: string;              // Who made the update (MTAI ID)
+  userName: string;
+  type: 'status_change' | 'comment' | 'file_upload';
+  content: string;             // Comment text or status change description
+  previousStatus?: TaskStatusExtended;
+  newStatus?: TaskStatusExtended;
+  fileUrl?: string;            // For file uploads
+  fileName?: string;
+  createdAt?: string;
+}
+
+/**
+ * Full Task interface for enterprise task tracking
+ */
 export interface Task {
   id: string;
   meetingId: string;
-  userId: string;
-  ownerMtaiId?: string;           // Assigned owner's MTAI ID
+  meetingTitle?: string;       // Denormalized for easy display
+  
+  // Ownership
+  creatorId: string;           // Meeting owner's Firebase UID
+  creatorMtaiId?: string;      // Meeting owner's MTAI ID
+  
+  // Assignment
+  assignedTo: string;          // Assigned user's MTAI ID
+  assignedToName: string;      // Display name
+  assignedToEmail: string;     // Email for notifications
+  speakerId?: string;          // Speaker label from diarization (A, B, C)
+  
+  // Task details
   title: string;
   description: string;
-  owner: string;                  // Display name of owner
-  deadline: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  assignedTo?: string;
-  confidence?: number;        // 0.0 - 1.0 confidence in assignment
-  sourceSentence?: string;    // Original quote from transcript
-  completed?: boolean;
+  priority: TaskPriorityExtended;
+  status: TaskStatusExtended;
+  dueDate?: string;            // ISO date string
+  
+  // Progress tracking
+  updates?: TaskUpdate[];      // Array of updates/comments
+  lastUpdateAt?: string;
+  
+  // AI extraction metadata
+  confidence?: number;         // 0.0 - 1.0 confidence in assignment
+  sourceSentence?: string;     // Original quote from transcript
+  
+  // Notification tracking
+  emailSent?: boolean;
+  emailSentAt?: string;
+  
+  // Timestamps
   createdAt?: string;
   updatedAt?: string;
+  completedAt?: string;
+  
+  // Legacy fields (for backward compatibility)
+  userId?: string;             // Alias for creatorId
+  owner?: string;              // Alias for assignedToName
+  deadline?: string;           // Alias for dueDate
+  completed?: boolean;         // Derived from status
 }
 
 // ============================================

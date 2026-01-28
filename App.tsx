@@ -13,6 +13,7 @@ import UploadPage from './pages/UploadPage';
 import MeetingsPage from './pages/MeetingsPage';
 import MeetingDetailsPage from './pages/MeetingDetailsPage';
 import TasksPage from './pages/TasksPage';
+import ManagerDashboard from './pages/ManagerDashboard';
 import ProfilePage from './pages/ProfilePage';
 
 const App: React.FC = () => {
@@ -31,6 +32,7 @@ const App: React.FC = () => {
             <Route path="/meetings" element={<Layout><MeetingsPage /></Layout>} />
             <Route path="/meetings/:id" element={<Layout><MeetingDetailsPage /></Layout>} />
             <Route path="/tasks" element={<Layout><TasksPage /></Layout>} />
+            <Route path="/manager" element={<Layout><ManagerDashboard /></Layout>} />
             <Route path="/profile" element={<Layout><ProfilePage /></Layout>} />
           </Route>
 

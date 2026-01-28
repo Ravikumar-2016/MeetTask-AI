@@ -52,6 +52,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <SidebarLink to="/dashboard" label="Dashboard" icon="dashboard" />
           <SidebarLink to="/meetings" label="Meetings" icon="video_call" />
           <SidebarLink to="/tasks" label="My Tasks" icon="assignment" />
+          <SidebarLink to="/manager" label="Task Manager" icon="supervisor_account" />
           <SidebarLink to="/upload" label="Upload New" icon="upload" />
         </nav>
 

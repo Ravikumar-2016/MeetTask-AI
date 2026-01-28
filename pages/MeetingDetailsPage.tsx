@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping, FirestoreUser } from '../types';
+import { Meeting, Task, MeetingStatus, TaskPriorityExtended, TaskStatus, TaskStatusExtended, SpeakerUtterance, SpeakerMapping, FirestoreUser } from '../types';
 import { getStatusBadgeClass, getStatusLabel } from '../hooks/useMeetings';
 
 /**
@@ -200,19 +200,28 @@ const MeetingDetailsPage: React.FC = () => {
           tasksData.push({
             id: doc.id,
             meetingId: data.meetingId,
+            meetingTitle: data.meetingTitle,
             userId: data.userId,
             title: data.title || 'Untitled Task',
             description: data.description || '',
-            owner: data.assignedTo || data.owner || 'Unassigned',
+            owner: data.assignedToName || data.owner || 'Unassigned',
             deadline: data.dueDate || data.deadline || '',
-            priority: (data.priority as TaskPriority) || 'medium',
-            status: (data.status as TaskStatus) || 'pending',
-            // New speaker assignment fields
+            priority: (data.priority as TaskPriorityExtended) || 'medium',
+            status: (data.status as TaskStatusExtended) || 'pending',
+            // Speaker assignment fields
             assignedTo: data.assignedTo || 'Unassigned',
+            assignedToName: data.assignedToName || '',
+            assignedToEmail: data.assignedToEmail || '',
+            creatorId: data.creatorId || data.userId || '',
+            creatorMtaiId: data.creatorMtaiId,
+            speakerId: data.speakerId,
+            dueDate: data.dueDate,
             confidence: data.confidence,
             sourceSentence: data.sourceSentence || '',
-            completed: data.completed || false,
+            completed: data.completed || data.status === 'completed',
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
+            updates: data.updates || [],
+            emailSent: data.emailSent || false,
           });
         });
 
@@ -305,16 +314,26 @@ const MeetingDetailsPage: React.FC = () => {
   }, [id, meeting?.status, authLoading, user]);
 
   // Handle speaker mapping change
-  const handleMappingChange = (speakerId: string, email: string) => {
-    setPendingMapping(prev => ({ ...prev, [speakerId]: email }));
+  const handleMappingChange = (speakerId: string, mtaiId: string) => {
+    setPendingMapping(prev => ({ ...prev, [speakerId]: mtaiId }));
   };
 
   // Save speaker mapping and trigger task extraction
   const saveSpeakerMapping = async () => {
-    // Validate all speakers are mapped
-    const unmapped = speakers.filter(s => !pendingMapping[s]);
-    if (unmapped.length > 0) {
-      setMappingError(`Please map all speakers: ${unmapped.map(s => `Speaker ${s}`).join(', ')}`);
+    // Get mappings that have values (non-skipped speakers)
+    const activeMappings = Object.entries(pendingMapping).filter(([_, value]) => value);
+    
+    // At least one speaker must be mapped
+    if (activeMappings.length === 0) {
+      setMappingError('Please map at least one speaker to extract tasks');
+      return;
+    }
+    
+    // Check for duplicate assignments (same user mapped to multiple speakers)
+    const assignedMtaiIds = activeMappings.map(([_, mtaiId]) => mtaiId);
+    const uniqueMtaiIds = new Set(assignedMtaiIds);
+    if (uniqueMtaiIds.size !== assignedMtaiIds.length) {
+      setMappingError('Each participant can only be assigned to one speaker');
       return;
     }
 
@@ -325,6 +344,9 @@ const MeetingDetailsPage: React.FC = () => {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Not authenticated');
 
+      // Only send non-empty mappings
+      const filteredMapping = Object.fromEntries(activeMappings);
+
       const res = await fetch('/api/save-speaker-mapping', {
         method: 'POST',
         headers: {
@@ -333,7 +355,7 @@ const MeetingDetailsPage: React.FC = () => {
         },
         body: JSON.stringify({
           meetingId: id,
-          speakerMapping: pendingMapping,
+          speakerMapping: filteredMapping,
         }),
       });
 
@@ -346,7 +368,7 @@ const MeetingDetailsPage: React.FC = () => {
       console.log('[MeetingDetails] Mapping saved, tasks:', result.tasksExtracted);
       
       // Update local state
-      setSpeakerMapping(pendingMapping);
+      setSpeakerMapping(filteredMapping);
       
       // Reload meeting to get updated status
       window.location.reload();
@@ -625,6 +647,13 @@ const MeetingDetailsPage: React.FC = () => {
                 Please identify who each speaker is to assign tasks correctly.
               </p>
               
+              {/* Enterprise Rules Notice */}
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                <p className="text-xs text-blue-700">
+                  <span className="font-semibold">Rules:</span> You (meeting creator) cannot be assigned. Each participant can only be assigned to one speaker.
+                </p>
+              </div>
+              
               <div className="space-y-3">
                 {speakers.map((speakerId) => {
                   const speakerColors: { [key: string]: string } = {
@@ -640,6 +669,23 @@ const MeetingDetailsPage: React.FC = () => {
                   const selectedMtaiId = pendingMapping[speakerId];
                   const selectedUser = usersList.find(u => u.mtaiId === selectedMtaiId);
                   
+                  // Get already-assigned MTAI IDs (excluding current speaker)
+                  const alreadyAssigned = Object.entries(pendingMapping)
+                    .filter(([key, value]) => key !== speakerId && value)
+                    .map(([_, value]) => value);
+                  
+                  // Current user's MTAI ID (meeting creator - cannot be assigned)
+                  const currentUserMtaiId = (user as any)?.mtaiId;
+                  
+                  // Filter available users
+                  const availableUsers = usersList.filter(u => {
+                    // Exclude meeting creator (self-assignment not allowed)
+                    if (u.mtaiId === currentUserMtaiId) return false;
+                    // Exclude already assigned users (unless it's the current selection)
+                    if (alreadyAssigned.includes(u.mtaiId) && u.mtaiId !== selectedMtaiId) return false;
+                    return true;
+                  });
+                  
                   return (
                     <div key={speakerId} className="flex items-center gap-3">
                       <span className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border shrink-0 ${colorClass}`}>
@@ -652,9 +698,10 @@ const MeetingDetailsPage: React.FC = () => {
                         className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 font-medium"
                       >
                         <option value="">Select participant...</option>
-                        {usersList.map((u) => (
+                        <option value="" disabled className="text-slate-400">── Skip this speaker ──</option>
+                        {availableUsers.map((u) => (
                           <option key={u.mtaiId} value={u.mtaiId}>
-                            [{u.mtaiId}] {u.displayName}
+                            [{u.mtaiId}] {u.displayName} ({u.email})
                           </option>
                         ))}
                       </select>
@@ -693,7 +740,7 @@ const MeetingDetailsPage: React.FC = () => {
 
               <button
                 onClick={saveSpeakerMapping}
-                disabled={savingMapping || !Object.values(pendingMapping).every(v => v)}
+                disabled={savingMapping || !Object.values(pendingMapping).some(v => v)}
                 className="mt-4 w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed text-white font-bold rounded-xl transition flex items-center justify-center gap-2"
               >
                 {savingMapping ? (
@@ -710,7 +757,9 @@ const MeetingDetailsPage: React.FC = () => {
               </button>
               
               <p className="mt-2 text-xs text-amber-700 text-center">
-                After confirming, we'll extract action items and assign them correctly.
+                After confirming, we'll extract action items and assign them to mapped participants.
+                <br />
+                <span className="text-amber-600">Skipped speakers will not receive task assignments.</span>
               </p>
             </div>
           )}

@@ -3,13 +3,14 @@
  * 
  * POST /api/save-speaker-mapping
  * 
- * NEW ARCHITECTURE: Uses MTAI IDs instead of emails
- * 
- * Called when user maps speakers to real people:
- * - User maps: { A: "MTAI001", B: "MTAI002" }
- * - We save the mapping
- * - We use LeMUR to extract tasks with correct assignments
- * - Status → "completed"
+ * ENTERPRISE WORKFLOW:
+ * 1. User maps speakers: { A: "MTAI001", B: "MTAI002" }
+ * 2. Validates: No duplicates, creator excluded from assignment
+ * 3. Saves mapping to transcript
+ * 4. Uses LeMUR to extract tasks with correct assignments
+ * 5. Saves tasks to dedicated /tasks collection
+ * 6. Triggers async email notifications
+ * 7. Status → "completed"
  * 
  * Request body:
  * {
@@ -58,20 +59,40 @@ interface FirestoreUser {
   authProviders: string[];
 }
 
-interface Task {
+// Enhanced Task type for enterprise workflow
+interface EnhancedTask {
   id: string;
   meetingId: string;
-  userId: string;
+  meetingTitle: string;
+  
+  // Ownership
+  creatorId: string;           // Meeting owner's Firebase UID
+  creatorMtaiId: string;       // Meeting owner's MTAI ID
+  creatorName: string;
+  
+  // Assignment
+  assignedTo: string;          // MTAI ID
+  assignedToName: string;
+  assignedToEmail: string;
+  speakerId?: string;
+  
+  // Task details
   title: string;
   description: string;
-  assignedTo: string;      // MTAI ID
-  assignedToName?: string;
-  assignedToEmail?: string;
-  speakerId?: string;
-  priority: 'low' | 'medium' | 'high';
-  status: 'pending' | 'in_progress' | 'completed';
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
   dueDate?: string;
+  
+  // AI extraction
+  confidence?: number;
+  sourceSentence?: string;
+  
+  // Timestamps
   createdAt: any;
+  updatedAt: any;
+  
+  // Legacy compatibility
+  userId: string;
 }
 
 // ============================================
@@ -107,7 +128,7 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// LeMUR TASK EXTRACTION
+// LeMUR TASK EXTRACTION (Enhanced)
 // ============================================
 async function extractTasksWithLeMUR(
   transcriptId: string,
@@ -124,28 +145,36 @@ async function extractTasksWithLeMUR(
     })
     .join('\n');
 
-  const prompt = `Analyze this meeting transcript and extract action items/tasks.
+  const prompt = `Analyze this meeting transcript and extract ALL action items and tasks.
 
 SPEAKER MAPPING:
 ${speakerInfo}
 
 For each task found, return:
-1. title: Brief task title
-2. description: What needs to be done
-3. assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person who should do it
+1. title: Brief, actionable task title (max 80 chars)
+2. description: Clear description of what needs to be done
+3. assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person responsible
 4. speakerId: The speaker ID (A, B, C) who is assigned
-5. priority: "low", "medium", or "high"
-6. dueDate: If mentioned (YYYY-MM-DD format)
+5. priority: "critical", "high", "medium", or "low"
+6. dueDate: If mentioned (YYYY-MM-DD format), else null
+7. sourceSentence: The exact quote from transcript that mentions this task
 
-Return a JSON array of tasks. If no clear tasks found, return an empty array [].
+PRIORITY GUIDELINES:
+- critical: Urgent, blocking other work, mentioned as priority
+- high: Important deadline, significant impact
+- medium: Normal priority, standard work
+- low: Nice-to-have, can be delayed
 
-IMPORTANT:
-- Only extract CLEAR action items (things someone committed to do)
-- Use the MTAI IDs from the speaker mapping (e.g., MTAI001, MTAI002)
-- If someone says "I'll do X", assign to that speaker's MTAI ID
-- If someone says "Can you do X?", assign to the person being asked
+Return a JSON array of tasks. If no clear tasks found, return [].
 
-Return ONLY valid JSON, no markdown, no explanation.`;
+RULES:
+- Only extract CLEAR action items (explicit commitments)
+- "I'll do X" → assign to that speaker
+- "Can you do X?" or "Please do X" → assign to person being asked
+- When in doubt about assignee, use the speaker who accepted the task
+- Never invent tasks that weren't discussed
+
+Return ONLY valid JSON array, no markdown, no explanation.`;
 
   try {
     const lemurRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
@@ -261,6 +290,21 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(403).json({ error: 'Not authorized' });
     }
 
+    // VALIDATION: Check for duplicate assignments
+    const assignedMtaiIds = Object.values(speakerMapping) as string[];
+    const uniqueAssignees = new Set(assignedMtaiIds.filter(id => id && id !== ''));
+    if (uniqueAssignees.size !== assignedMtaiIds.filter(id => id && id !== '').length) {
+      return response.status(400).json({ 
+        error: 'Duplicate assignment detected. Each user can only be assigned to one speaker.' 
+      });
+    }
+
+    // Get meeting creator info for notifications
+    const creatorDoc = await db.collection('users').where('uid', '==', userId).limit(1).get();
+    const creatorData = creatorDoc.empty ? null : creatorDoc.docs[0].data();
+    const creatorMtaiId = creatorData?.mtaiId || '';
+    const creatorName = creatorData?.displayName || 'Meeting Organizer';
+
     // Update status to analyzing
     await meetingRef.update({
       status: 'analyzing',
@@ -281,8 +325,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const transcript = transcriptDoc.data()!;
 
-    // Get MTAI IDs from mapping
-    const mtaiIds = Object.values(speakerMapping) as string[];
+    // Get MTAI IDs from mapping (filter empty values - skipped speakers)
+    const mtaiIds = (Object.values(speakerMapping) as string[]).filter(id => id && id !== '');
     
     // Look up users by MTAI ID
     const usersMap = await lookupUsersByMtaiId(db, mtaiIds);
@@ -314,8 +358,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     console.log('📋 Tasks extracted:', extractedTasks.length);
 
-    // Save tasks to Firestore
-    const savedTasks: Task[] = [];
+    // Save tasks to Firestore with enhanced structure
+    const savedTasks: EnhancedTask[] = [];
     const batch = db.batch();
 
     for (const task of extractedTasks) {
@@ -323,20 +367,45 @@ export default async function handler(request: VercelRequest, response: VercelRe
       // Use mtaiId from LeMUR response or fall back to first speaker
       const assignedMtaiId = task.assignedToMtaiId || task.assignedTo || mtaiIds[0] || '';
       
-      const taskData: Task = {
+      // Normalize priority (handle "critical" from LLM)
+      let priority = (task.priority || 'medium').toLowerCase();
+      if (!['critical', 'high', 'medium', 'low'].includes(priority)) {
+        priority = 'medium';
+      }
+      
+      const taskData: EnhancedTask = {
         id: taskRef.id,
         meetingId,
-        userId,
-        title: task.title || 'Untitled Task',
-        description: task.description || '',
+        meetingTitle: meeting.title || 'Untitled Meeting',
+        
+        // Ownership
+        creatorId: userId,
+        creatorMtaiId: creatorMtaiId,
+        creatorName: creatorName,
+        
+        // Assignment
         assignedTo: assignedMtaiId,
         assignedToName: mtaiIdToName.get(assignedMtaiId) || assignedMtaiId,
         assignedToEmail: mtaiIdToEmail.get(assignedMtaiId) || '',
         speakerId: task.speakerId,
-        priority: task.priority || 'medium',
+        
+        // Task details
+        title: task.title || 'Untitled Task',
+        description: task.description || '',
+        priority: priority as 'critical' | 'high' | 'medium' | 'low',
         status: 'pending',
-        dueDate: task.dueDate,
+        dueDate: task.dueDate || null,
+        
+        // AI extraction metadata
+        confidence: task.confidence,
+        sourceSentence: task.sourceSentence || null,
+        
+        // Timestamps
         createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        
+        // Legacy compatibility
+        userId: userId,
       };
 
       batch.set(taskRef, taskData);
@@ -368,10 +437,37 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('   - Tasks:', savedTasks.length);
     console.log('   - Status: completed');
 
-    return response.status(200).json({
-      success: true,
-      meetingId,
-      tasksExtracted: savedTasks.length,
+    // ============================================
+    // ASYNC EMAIL NOTIFICATIONS
+    // Fire-and-forget - don't block the response
+    // ============================================
+    if (savedTasks.length > 0) {
+      console.log('📧 Triggering async email notifications...');
+      
+      // Get base URL for notification service
+      const baseUrl = process.env.VERCEL_URL 
+        ? `https://${process.env.VERCEL_URL}`
+        : '';
+      
+      // Fire-and-forget - don't await
+      if (baseUrl) {
+        fetch(`${baseUrl}/api/send-task-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meetingId,
+            meetingTitle: meeting.title || 'Untitled Meeting',
+            tasks: savedTasks,
+            creatorName: creatorName,
+          }),
+        }).catch(err => {
+          console.error('📧 Email notification failed (non-blocking):', err.message);
+        });
+      } else {
+        console.log('⚠️ VERCEL_URL not set - skipping email notifications');
+      }
+    }
+
       tasks: savedTasks,
       status: 'completed',
     });
