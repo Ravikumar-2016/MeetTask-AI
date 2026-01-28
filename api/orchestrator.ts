@@ -110,10 +110,16 @@ async function extractTextWithGemini(fileUrl: string, fileType: 'image' | 'pdf')
 
   console.log('🔮 [Gemini] Starting OCR for:', fileType);
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  
+  // PDF files cannot be directly processed by Gemini Vision - need image conversion
+  if (fileType === 'pdf') {
+    console.log('⚠️ [Gemini] PDF files require conversion to images first');
+    return 'PDF text extraction is not yet supported. Please convert your PDF to an image (screenshot or export as PNG/JPG) and upload the image instead.';
+  }
 
-  // Fetch the file from Cloudinary
-  console.log('📥 [Gemini] Fetching file from:', fileUrl.substring(0, 60) + '...');
+  // Fetch the image from Cloudinary
+  console.log('📥 [Gemini] Fetching image from:', fileUrl.substring(0, 80) + '...');
+  
   const response = await fetch(fileUrl);
   
   if (!response.ok) {
@@ -123,18 +129,21 @@ async function extractTextWithGemini(fileUrl: string, fileType: 'image' | 'pdf')
   const buffer = await response.arrayBuffer();
   const base64Data = Buffer.from(buffer).toString('base64');
   
-  // Determine MIME type
+  // Determine MIME type from URL
   let mimeType = 'image/jpeg';
-  if (fileUrl.includes('.png')) mimeType = 'image/png';
-  else if (fileUrl.includes('.webp')) mimeType = 'image/webp';
-  else if (fileUrl.includes('.pdf') || fileType === 'pdf') mimeType = 'application/pdf';
+  const urlLower = fileUrl.toLowerCase();
+  if (urlLower.includes('.png')) mimeType = 'image/png';
+  else if (urlLower.includes('.webp')) mimeType = 'image/webp';
+  else if (urlLower.includes('.gif')) mimeType = 'image/gif';
+  else if (urlLower.includes('.jpg') || urlLower.includes('.jpeg')) mimeType = 'image/jpeg';
 
   console.log('🔮 [Gemini] Using MIME type:', mimeType);
+  console.log('🔮 [Gemini] Image size:', Math.round(buffer.byteLength / 1024), 'KB');
 
-  const prompt = `You are an OCR specialist. Extract ALL text from this ${fileType === 'pdf' ? 'PDF document' : 'image'} exactly as it appears.
+  const prompt = `You are an OCR specialist. Extract ALL text from this image exactly as it appears.
 
 INSTRUCTIONS:
-1. Extract every word, number, and symbol visible
+1. Extract every word, number, and symbol visible in the image
 2. Fix any broken lines or wrapped text - merge them into proper sentences
 3. Preserve paragraph structure with blank lines between paragraphs
 4. If there are speaker names (like "John:", "Manager:", etc.), keep them on their own lines
@@ -144,34 +153,44 @@ INSTRUCTIONS:
 
 OUTPUT: Return ONLY the extracted text, cleaned and properly formatted.`;
 
-  try {
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
-      },
-    ]);
+  const imageData = {
+    inlineData: {
+      mimeType,
+      data: base64Data,
+    },
+  };
 
-    const extractedText = result.response.text();
-    
-    // Clean the text
-    let cleanedText = extractedText
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`/g, '')
-      .replace(/[ \t]+/g, ' ')
-      .replace(/-\s*\n\s*/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    
-    console.log('✅ [Gemini] OCR complete, text length:', cleanedText.length);
-    return cleanedText;
-  } catch (error: any) {
-    console.error('❌ [Gemini] OCR error:', error.message);
-    throw new Error(`Gemini OCR failed: ${error.message}`);
+  // Try models in order of preference
+  const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro-vision'];
+  let lastError: Error | null = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      console.log(`🔮 [Gemini] Trying model: ${modelName}`);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent([prompt, imageData]);
+      const extractedText = result.response.text();
+      
+      // Clean the text
+      let cleanedText = extractedText
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`/g, '')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/-\s*\n\s*/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      
+      console.log(`✅ [Gemini] OCR complete with ${modelName}, text length:`, cleanedText.length);
+      return cleanedText;
+    } catch (error: any) {
+      console.log(`⚠️ [Gemini] Model ${modelName} failed:`, error.message);
+      lastError = error;
+      // Continue to next model
+    }
   }
+
+  // All models failed
+  throw new Error(`Gemini OCR failed with all models: ${lastError?.message || 'Unknown error'}`);
 }
 
 // ============================================

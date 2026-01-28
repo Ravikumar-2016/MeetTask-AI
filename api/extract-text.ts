@@ -87,7 +87,6 @@ async function extractTextWithGemini(imageUrl: string, fileType: 'image' | 'pdf'
 
   console.log('🔮 [Gemini] Initializing Gemini Vision API...');
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   // Fetch the image/PDF from Cloudinary
   console.log('📥 [Gemini] Fetching file from:', imageUrl.substring(0, 60) + '...');
@@ -124,28 +123,36 @@ INSTRUCTIONS:
 
 OUTPUT: Return ONLY the extracted text, cleaned and properly formatted. No other text.`;
 
-  try {
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType,
-          data: base64Image,
-        },
-      },
-    ]);
+  const imageData = {
+    inlineData: {
+      mimeType,
+      data: base64Image,
+    },
+  };
 
-    const response = await result.response;
-    const extractedText = response.text();
-    
-    console.log('✅ [Gemini] Text extracted, length:', extractedText.length);
-    console.log('📝 [Gemini] Preview:', extractedText.substring(0, 200));
-    
-    return cleanExtractedText(extractedText);
-  } catch (error: any) {
-    console.error('❌ [Gemini] OCR error:', error.message);
-    throw new Error(`Gemini OCR failed: ${error.message}`);
+  // Try models in order of preference
+  const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro-vision'];
+  let lastError: Error | null = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      console.log(`🔮 [Gemini] Trying model: ${modelName}`);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent([prompt, imageData]);
+      const response = await result.response;
+      const extractedText = response.text();
+      
+      console.log(`✅ [Gemini] Text extracted with ${modelName}, length:`, extractedText.length);
+      console.log('📝 [Gemini] Preview:', extractedText.substring(0, 200));
+      
+      return cleanExtractedText(extractedText);
+    } catch (error: any) {
+      console.log(`⚠️ [Gemini] Model ${modelName} failed:`, error.message);
+      lastError = error;
+    }
   }
+
+  throw new Error(`Gemini OCR failed with all models: ${lastError?.message || 'Unknown error'}`);
 }
 
 /**

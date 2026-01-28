@@ -182,12 +182,13 @@ const MeetingDetailsPage: React.FC = () => {
   useEffect(() => {
     if (authLoading || !id || !user?.uid) return;
 
-    console.log('[MeetingDetails] Setting up tasks listener for meeting:', id);
+    console.log('[MeetingDetails] Setting up tasks listener for meeting:', id, 'user:', user.uid);
 
-    // Query tasks for this meeting
+    // Query tasks for this meeting AND this user (required by Firestore rules)
     const tasksQuery = query(
       collection(db, 'tasks'),
-      where('meetingId', '==', id)
+      where('meetingId', '==', id),
+      where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(

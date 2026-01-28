@@ -161,10 +161,28 @@ export default async function handler(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // 7. Send to Gemini for task extraction
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // 7. Send to Gemini for task extraction - try multiple models
+    const modelsToTry = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro'];
+    let result;
+    let lastError;
     
-    const result = await model.generateContent(EXTRACTION_PROMPT + transcript);
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`🔮 Trying Gemini model: ${modelName}`);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        result = await model.generateContent(EXTRACTION_PROMPT + transcript);
+        console.log(`✅ Success with model: ${modelName}`);
+        break;
+      } catch (error: any) {
+        console.log(`⚠️ Model ${modelName} failed:`, error.message);
+        lastError = error;
+      }
+    }
+    
+    if (!result) {
+      throw new Error(`All Gemini models failed: ${lastError?.message || 'Unknown error'}`);
+    }
+    
     const responseText = result.response.text();
 
     console.log(`📝 Gemini response received`);
