@@ -5,6 +5,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { processMeeting } from '../services/api';
+import Tesseract from 'tesseract.js';
 
 // ============================================
 // CLOUDINARY CONFIGURATION
@@ -50,10 +51,45 @@ const UploadPage: React.FC = () => {
   const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  /**
+   * Perform OCR on image using Tesseract.js (runs in browser)
+   * This extracts text from images like meeting whiteboards, notes, screenshots
+   */
+  const performImageOCR = async (imageFile: File): Promise<string> => {
+    console.log('[OCR] Starting text extraction from image...');
+    setProgressMessage('Extracting text from image...');
+    
+    try {
+      const result = await Tesseract.recognize(
+        imageFile,
+        'eng', // English language
+        {
+          logger: (m) => {
+            if (m.status === 'recognizing text') {
+              const ocrProgress = Math.round(m.progress * 50); // OCR is 50% of processing
+              setProgress(50 + ocrProgress); // After 50% upload
+              console.log(`[OCR] Progress: ${ocrProgress}%`);
+            }
+          }
+        }
+      );
+      
+      const extractedText = result.data.text.trim();
+      console.log('[OCR] Extracted text length:', extractedText.length);
+      console.log('[OCR] Sample:', extractedText.substring(0, 200));
+      
+      return extractedText || 'No text could be extracted from this image.';
+    } catch (err) {
+      console.error('[OCR] Error:', err);
+      return 'Text extraction failed. Please manually enter meeting notes.';
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -129,12 +165,18 @@ const UploadPage: React.FC = () => {
    * @param cloudinaryUrl - The secure URL from Cloudinary
    * @param fileName - Original file name
    * @param fileType - 'image', 'video', or 'audio'
+   * @param ocrText - Optional OCR text for images
    */
-  const saveToFirestore = async (cloudinaryUrl: string, fileName: string, fileType: FileType) => {
+  const saveToFirestore = async (
+    cloudinaryUrl: string, 
+    fileName: string, 
+    fileType: FileType,
+    ocrText?: string
+  ) => {
     if (!user) throw new Error('User not authenticated');
 
     // ALWAYS set status to 'uploaded' - backend controls lifecycle from here
-    const meetingData = {
+    const meetingData: any = {
       title: title.trim(),
       userId: user.uid,
       audioUrl: cloudinaryUrl, // Keep field name for backward compatibility
@@ -145,8 +187,16 @@ const UploadPage: React.FC = () => {
       originalFileName: fileName,
     };
 
+    // For images, include the OCR text
+    if (fileType === 'image' && ocrText) {
+      meetingData.ocrText = ocrText;
+    }
+
     console.log('[Firestore] Saving meeting:', meetingData);
     console.log('[Firestore] File type:', fileType);
+    if (ocrText) {
+      console.log('[Firestore] OCR text length:', ocrText.length);
+    }
     
     const docRef = await addDoc(collection(db, 'meetings'), meetingData);
     console.log('[Firestore] Meeting saved with ID:', docRef.id);
@@ -161,6 +211,7 @@ const UploadPage: React.FC = () => {
     setUploading(true);
     setError('');
     setProgress(0);
+    setProgressMessage('');
 
     try {
       // Step 1: Detect file type
@@ -168,6 +219,7 @@ const UploadPage: React.FC = () => {
       console.log('[Upload] Detected file type:', fileType);
 
       // Step 2: Upload to Cloudinary with correct resource type
+      setProgressMessage('Uploading file...');
       console.log('[Upload] Starting Cloudinary upload for:', file.name);
       const cloudinaryResponse = await uploadToCloudinary(file, fileType);
 
@@ -176,7 +228,16 @@ const UploadPage: React.FC = () => {
         throw new Error('Cloudinary did not return a secure URL');
       }
 
-      // Step 4: Verify folder (if preset is configured correctly)
+      // Step 4: For images, perform OCR (client-side)
+      let ocrText: string | undefined;
+      if (fileType === 'image') {
+        console.log('[Upload] Image detected - performing OCR...');
+        setProgress(50);
+        ocrText = await performImageOCR(file);
+        setProgress(95);
+      }
+
+      // Step 5: Verify folder (if preset is configured correctly)
       // Note: Cloudinary folders are virtual - they appear after first upload
       if (cloudinaryResponse.public_id) {
         const expectedFolder = 'meetings/';
@@ -189,16 +250,17 @@ const UploadPage: React.FC = () => {
         }
       }
 
-      // Step 5: Save to Firestore with file type
-      // Images will be marked as 'completed', audio/video as 'uploaded' (pending AI)
+      // Step 6: Save to Firestore with file type and OCR text
+      setProgressMessage('Saving to database...');
       console.log('[Upload] Saving to Firestore...');
-      const meetingId = await saveToFirestore(cloudinaryResponse.secure_url, file.name, fileType);
+      const meetingId = await saveToFirestore(cloudinaryResponse.secure_url, file.name, fileType, ocrText);
 
       console.log('[Upload] Complete! Meeting ID:', meetingId);
       setProgress(100);
 
-      // Step 6: Trigger AI Orchestrator for ALL file types
+      // Step 7: Trigger AI Orchestrator for ALL file types
       // The orchestrator will handle the appropriate processing based on file type
+      setProgressMessage('Starting AI analysis...');
       console.log('[Upload] Triggering AI orchestrator...');
       
       try {
@@ -293,7 +355,7 @@ const UploadPage: React.FC = () => {
             {uploading && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm font-bold text-slate-700">
-                  <span>Uploading...</span>
+                  <span>{progressMessage || 'Processing...'}</span>
                   <span>{Math.round(progress)}%</span>
                 </div>
                 <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">

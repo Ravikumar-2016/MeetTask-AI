@@ -94,6 +94,7 @@ interface MeetingDoc {
   audioUrl?: string;
   fileType?: 'audio' | 'video' | 'image';
   status: string;
+  ocrText?: string;
 }
 
 // ============================================
@@ -212,15 +213,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('📁 File type:', meeting.fileType || 'unknown');
 
     // ============================================
-    // HANDLE IMAGES: OCR + fake speakers for mapping
+    // HANDLE IMAGES: Use OCR text from frontend
     // ============================================
     if (meeting.fileType === 'image') {
       console.log('🖼️ [Orchestrator] Image file detected');
-      console.log('📝 Will extract text via OCR and require speaker mapping');
       
-      // For now, images need manual processing
-      // In a production app, you'd integrate Google Cloud Vision or Tesseract here
-      // For the MVP, we'll create a placeholder and require mapping
+      // Get OCR text from frontend (extracted in browser via Tesseract.js)
+      const ocrText = meeting.ocrText || 'No text extracted from image.';
+      console.log('📝 OCR text length:', ocrText.length);
+      console.log('📝 OCR preview:', ocrText.substring(0, 100));
       
       // Create fake speakers A, B, C for manual mapping
       const fakeSpeakers = ['A', 'B', 'C'];
@@ -229,31 +230,30 @@ export default async function handler(request: VercelRequest, response: VercelRe
         status: 'needs_mapping',
         speakers: fakeSpeakers,
         speakerCount: fakeSpeakers.length,
-        summary: 'Image uploaded. Please map participants to extract tasks.',
+        summary: 'Image processed. Please map participants to extract tasks.',
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Create a transcript entry for the image
+      // Create transcript from OCR text
+      // Format as if Speaker A said all the text (user can remap later)
+      const formattedTranscript = ocrText.length > 50 
+        ? `Speaker A [0:00]:\n${ocrText}`
+        : `This image did not contain extractable text.\n\nTo extract tasks:\n1. Map speakers A, B, C to participants\n2. Click "Confirm & Extract Tasks"`;
+
       await db.collection('transcripts').doc(meetingId).set({
         meetingId,
         userId: user.uid,
-        text: 'Image file uploaded. Text extraction pending.',
-        formattedTranscript: `This is an image file.
-
-To extract tasks, please:
-1. Map Speaker A, B, C to the participants shown in the image
-2. Describe what tasks are visible in the image
-3. Click "Confirm & Extract Tasks"
-
-Note: For better task extraction, consider uploading meeting audio or video recordings.`,
-        summary: 'Image uploaded - awaiting speaker mapping.',
+        text: ocrText,
+        formattedTranscript,
+        summary: 'Text extracted from image via OCR.',
         speakers: fakeSpeakers,
         speakerCount: fakeSpeakers.length,
         utterances: [
-          { speaker: 'A', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
-          { speaker: 'B', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
-          { speaker: 'C', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
+          { speaker: 'A', text: ocrText || 'Content from image', start: 0, end: 0, confidence: 0.8 },
+          { speaker: 'B', text: '(Additional participant)', start: 0, end: 0, confidence: 0 },
+          { speaker: 'C', text: '(Additional participant)', start: 0, end: 0, confidence: 0 },
         ],
+        ocrSource: true,
         createdAt: FieldValue.serverTimestamp(),
       });
 
