@@ -3,8 +3,10 @@
  * 
  * POST /api/save-speaker-mapping
  * 
+ * NEW ARCHITECTURE: Uses MTAI IDs instead of emails
+ * 
  * Called when user maps speakers to real people:
- * - User maps: { A: "john@email.com", B: "jane@email.com" }
+ * - User maps: { A: "MTAI001", B: "MTAI002" }
  * - We save the mapping
  * - We use LeMUR to extract tasks with correct assignments
  * - Status → "completed"
@@ -12,7 +14,7 @@
  * Request body:
  * {
  *   meetingId: string,
- *   speakerMapping: { A: "email@...", B: "email@...", ... }
+ *   speakerMapping: { A: "MTAI001", B: "MTAI002", ... }
  * }
  */
 
@@ -44,7 +46,16 @@ function getAdminDb() {
 // TYPES
 // ============================================
 interface SpeakerMapping {
-  [speakerId: string]: string; // "A" => "john@email.com"
+  [speakerId: string]: string; // "A" => "MTAI001"
+}
+
+interface FirestoreUser {
+  uid: string;
+  mtaiId: string;
+  email: string;
+  displayName: string;
+  photoURL?: string | null;
+  authProviders: string[];
 }
 
 interface Task {
@@ -53,8 +64,9 @@ interface Task {
   userId: string;
   title: string;
   description: string;
-  assignedTo: string;
+  assignedTo: string;      // MTAI ID
   assignedToName?: string;
+  assignedToEmail?: string;
   speakerId?: string;
   priority: 'low' | 'medium' | 'high';
   status: 'pending' | 'in_progress' | 'completed';
@@ -62,11 +74,33 @@ interface Task {
   createdAt: any;
 }
 
-interface SpeakerUtterance {
-  speaker: string;
-  text: string;
-  start: number;
-  end: number;
+// ============================================
+// LOOKUP USERS BY MTAI ID
+// ============================================
+async function lookupUsersByMtaiId(
+  db: FirebaseFirestore.Firestore,
+  mtaiIds: string[]
+): Promise<Map<string, FirestoreUser>> {
+  const usersMap = new Map<string, FirestoreUser>();
+  
+  // Query all users and filter by mtaiId
+  const usersSnap = await db.collection('users').get();
+  
+  usersSnap.forEach((doc) => {
+    const data = doc.data();
+    if (data.mtaiId && mtaiIds.includes(data.mtaiId)) {
+      usersMap.set(data.mtaiId, {
+        uid: data.uid || '',
+        mtaiId: data.mtaiId,
+        email: data.email || doc.id,
+        displayName: data.displayName || data.email?.split('@')[0] || 'User',
+        photoURL: data.photoURL || null,
+        authProviders: data.authProviders || [],
+      });
+    }
+  });
+  
+  return usersMap;
 }
 
 // ============================================
@@ -75,14 +109,17 @@ interface SpeakerUtterance {
 async function extractTasksWithLeMUR(
   transcriptId: string,
   speakerMapping: SpeakerMapping,
-  participants: string[]
+  mtaiIdToName: Map<string, string>
 ): Promise<any[]> {
   const apiKey = process.env.ASSEMBLYAI_API_KEY;
   
-  // Build speaker info for prompt
+  // Build speaker info for prompt using display names
   const speakerInfo = Object.entries(speakerMapping)
-    .map(([id, email]) => `Speaker ${id} = ${email}`)
-    .join(', ');
+    .map(([id, mtaiId]) => {
+      const name = mtaiIdToName.get(mtaiId) || mtaiId;
+      return `Speaker ${id} = ${name} (${mtaiId})`;
+    })
+    .join('\n');
 
   const prompt = `Analyze this meeting transcript and extract action items/tasks.
 
@@ -92,7 +129,7 @@ ${speakerInfo}
 For each task found, return:
 1. title: Brief task title
 2. description: What needs to be done
-3. assignedTo: Email of the person who should do it (use the speaker mapping above)
+3. assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person who should do it
 4. speakerId: The speaker ID (A, B, C) who is assigned
 5. priority: "low", "medium", or "high"
 6. dueDate: If mentioned (YYYY-MM-DD format)
@@ -101,8 +138,8 @@ Return a JSON array of tasks. If no clear tasks found, return an empty array [].
 
 IMPORTANT:
 - Only extract CLEAR action items (things someone committed to do)
-- Use the exact email addresses from the speaker mapping
-- If someone says "I'll do X", assign to that speaker's email
+- Use the MTAI IDs from the speaker mapping (e.g., MTAI001, MTAI002)
+- If someone says "I'll do X", assign to that speaker's MTAI ID
 - If someone says "Can you do X?", assign to the person being asked
 
 Return ONLY valid JSON, no markdown, no explanation.`;
@@ -241,24 +278,23 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const transcript = transcriptDoc.data()!;
 
-    // Get participant names for display
-    const participants = Object.values(speakerMapping) as string[];
+    // Get MTAI IDs from mapping
+    const mtaiIds = Object.values(speakerMapping) as string[];
     
-    // Build participant info (look up display names)
-    const userDocs = await Promise.all(
-      participants.map(email => db.collection('users').doc(email).get())
-    );
+    // Look up users by MTAI ID
+    const usersMap = await lookupUsersByMtaiId(db, mtaiIds);
     
-    const emailToName: { [email: string]: string } = {};
-    userDocs.forEach((doc, i) => {
-      if (doc.exists) {
-        emailToName[participants[i]] = doc.data()?.displayName || participants[i];
-      } else {
-        emailToName[participants[i]] = participants[i].split('@')[0];
-      }
-    });
+    // Build MTAI ID to display name mapping
+    const mtaiIdToName = new Map<string, string>();
+    const mtaiIdToEmail = new Map<string, string>();
+    
+    for (const [mtaiId, user] of usersMap) {
+      mtaiIdToName.set(mtaiId, user.displayName);
+      mtaiIdToEmail.set(mtaiId, user.email);
+    }
 
-    console.log('📧 Email to Name:', emailToName);
+    console.log('👥 Users found:', usersMap.size);
+    console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
 
     // Extract tasks using LeMUR
     console.log('🤖 Extracting tasks with LeMUR...');
@@ -269,7 +305,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       extractedTasks = await extractTasksWithLeMUR(
         meeting.transcriptId,
         speakerMapping,
-        participants
+        mtaiIdToName
       );
     }
 
@@ -281,7 +317,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     for (const task of extractedTasks) {
       const taskRef = db.collection('tasks').doc();
-      const assignedEmail = task.assignedTo || participants[0] || userId;
+      // Use mtaiId from LeMUR response or fall back to first speaker
+      const assignedMtaiId = task.assignedToMtaiId || task.assignedTo || mtaiIds[0] || '';
       
       const taskData: Task = {
         id: taskRef.id,
@@ -289,8 +326,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
         userId,
         title: task.title || 'Untitled Task',
         description: task.description || '',
-        assignedTo: assignedEmail,
-        assignedToName: emailToName[assignedEmail] || assignedEmail.split('@')[0],
+        assignedTo: assignedMtaiId,
+        assignedToName: mtaiIdToName.get(assignedMtaiId) || assignedMtaiId,
+        assignedToEmail: mtaiIdToEmail.get(assignedMtaiId) || '',
         speakerId: task.speakerId,
         priority: task.priority || 'medium',
         status: 'pending',
@@ -309,7 +347,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     await db.collection('transcripts').doc(meetingId).update({
       speakerMapping,
       speakerMappingComplete: true,
-      emailToName,
+      mtaiIdToName: Object.fromEntries(mtaiIdToName),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
@@ -319,7 +357,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       speakerMapping,
       speakerMappingComplete: true,
       taskCount: savedTasks.length,
-      participants,
+      participants: mtaiIds,
       updatedAt: FieldValue.serverTimestamp(),
     });
 

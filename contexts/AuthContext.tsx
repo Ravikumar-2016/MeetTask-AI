@@ -2,11 +2,12 @@
  * AuthContext.tsx - Production-ready Firebase Authentication
  * 
  * Features:
+ * - Human-readable MTAI IDs (MTAI001, MTAI002, etc.)
+ * - User deduplication by email (same person = one user)
  * - Email/Password signup with email verification
  * - Password reset via Firebase
  * - Google OAuth (auto-verified)
- * - Proper error handling without relying on fetchSignInMethodsForEmail
- *   (which returns empty due to Firebase's Email Enumeration Protection)
+ * - Auth provider linking (google + password = same user)
  * 
  * Note: Firebase has Email Enumeration Protection enabled by default (since 2023),
  * which makes fetchSignInMethodsForEmail return empty arrays. We handle auth
@@ -25,14 +26,15 @@ import {
   User as FirebaseUser,
   AuthError
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, collection, query, where, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
-import { User } from '../types';
+import { User, FirestoreUser } from '../types';
 
 // Extended User type with verification and provider info
 interface ExtendedUser extends User {
   emailVerified: boolean;
   authProvider: 'email' | 'google';
+  mtaiId: string;
 }
 
 // Auth context interface
@@ -85,18 +87,76 @@ const getAuthErrorMessage = (error: AuthError): string => {
   return errorMessages[error.code] || error.message || 'An unexpected error occurred. Please try again.';
 };
 
+/**
+ * Generate next MTAI ID (MTAI001, MTAI002, etc.)
+ */
+const generateMtaiId = async (): Promise<string> => {
+  const counterRef = doc(db, 'system', 'counters');
+  
+  try {
+    const newId = await runTransaction(db, async (transaction) => {
+      const counterDoc = await transaction.get(counterRef);
+      
+      let nextNumber = 1;
+      if (counterDoc.exists()) {
+        nextNumber = (counterDoc.data().userCount || 0) + 1;
+      }
+      
+      transaction.set(counterRef, { userCount: nextNumber }, { merge: true });
+      
+      return `MTAI${nextNumber.toString().padStart(3, '0')}`;
+    });
+    
+    console.log('✅ Generated MTAI ID:', newId);
+    return newId;
+  } catch (error) {
+    // Fallback: use timestamp-based ID
+    console.warn('⚠️ Counter transaction failed, using fallback');
+    return `MTAI${Date.now().toString().slice(-6)}`;
+  }
+};
+
+/**
+ * Find existing user by email (for deduplication)
+ */
+const findUserByEmail = async (email: string): Promise<FirestoreUser | null> => {
+  try {
+    // First check in users collection by email document ID
+    const userRef = doc(db, 'users', email);
+    const userSnap = await getDoc(userRef);
+    
+    if (userSnap.exists()) {
+      return userSnap.data() as FirestoreUser;
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('⚠️ Error finding user by email:', error);
+    return null;
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<ExtendedUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   /**
-   * Convert Firebase User to our ExtendedUser type
+   * Convert Firebase User to our ExtendedUser type (with MTAI ID lookup)
    */
-  const mapFirebaseUser = useCallback((firebaseUser: FirebaseUser): ExtendedUser => {
+  const mapFirebaseUser = useCallback(async (firebaseUser: FirebaseUser): Promise<ExtendedUser> => {
     // Determine auth provider from providerData
     const isGoogleUser = firebaseUser.providerData.some(
       provider => provider.providerId === 'google.com'
     );
+
+    // Look up MTAI ID from Firestore
+    let mtaiId = 'MTAI000';
+    if (firebaseUser.email) {
+      const existingUser = await findUserByEmail(firebaseUser.email);
+      if (existingUser) {
+        mtaiId = existingUser.mtaiId;
+      }
+    }
 
     return {
       uid: firebaseUser.uid,
@@ -104,40 +164,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
       photoURL: firebaseUser.photoURL,
       emailVerified: firebaseUser.emailVerified,
-      authProvider: isGoogleUser ? 'google' : 'email'
+      authProvider: isGoogleUser ? 'google' : 'email',
+      mtaiId
     };
   }, []);
 
   /**
    * Create or update user document in Firestore
+   * KEY: Uses email as document ID for deduplication
+   * Merges auth providers if same email signs up multiple ways
    */
   const saveUserToFirestore = useCallback(async (firebaseUser: FirebaseUser) => {
+    if (!firebaseUser.email) {
+      console.warn('⚠️ No email for user, skipping Firestore save');
+      return;
+    }
+
     try {
-      const userRef = doc(db, 'users', firebaseUser.uid);
+      const email = firebaseUser.email;
+      const userRef = doc(db, 'users', email); // KEY: email as document ID
       const userSnap = await getDoc(userRef);
+      
       const isGoogleUser = firebaseUser.providerData.some(p => p.providerId === 'google.com');
+      const isPasswordUser = firebaseUser.providerData.some(p => p.providerId === 'password');
+      const currentProvider: 'google' | 'password' = isGoogleUser ? 'google' : 'password';
 
-      const userData = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-        photoURL: firebaseUser.photoURL || null,
-        emailVerified: firebaseUser.emailVerified,
-        authProvider: isGoogleUser ? 'google' : 'email',
-        updatedAt: serverTimestamp()
-      };
+      if (userSnap.exists()) {
+        // EXISTING USER - merge auth providers
+        const existingData = userSnap.data() as FirestoreUser;
+        const existingProviders = existingData.authProviders || [];
+        
+        // Add current provider if not already in list
+        const updatedProviders = existingProviders.includes(currentProvider)
+          ? existingProviders
+          : [...existingProviders, currentProvider];
 
-      if (!userSnap.exists()) {
-        // New user - create document
         await setDoc(userRef, {
-          ...userData,
-          createdAt: serverTimestamp()
-        });
-        console.log('✅ User document created');
+          // Keep existing mtaiId
+          mtaiId: existingData.mtaiId,
+          uid: firebaseUser.uid, // Update to latest UID
+          email: email,
+          displayName: firebaseUser.displayName || existingData.displayName || email.split('@')[0],
+          photoURL: firebaseUser.photoURL || existingData.photoURL || null,
+          authProviders: updatedProviders,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        
+        console.log('✅ User merged, providers:', updatedProviders);
       } else {
-        // Existing user - update document
-        await setDoc(userRef, userData, { merge: true });
-        console.log('✅ User document updated');
+        // NEW USER - generate MTAI ID
+        const mtaiId = await generateMtaiId();
+        
+        const userData: FirestoreUser = {
+          uid: firebaseUser.uid,
+          mtaiId,
+          email: email,
+          displayName: firebaseUser.displayName || email.split('@')[0],
+          photoURL: firebaseUser.photoURL || null,
+          authProviders: [currentProvider],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        };
+
+        await setDoc(userRef, userData);
+        console.log('✅ New user created:', mtaiId);
       }
     } catch (error: any) {
       // Don't fail auth if Firestore fails (permissions, network, etc.)
@@ -258,7 +348,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUser = useCallback(async () => {
     if (auth.currentUser) {
       await auth.currentUser.reload();
-      setUser(mapFirebaseUser(auth.currentUser));
+      const mappedUser = await mapFirebaseUser(auth.currentUser);
+      setUser(mappedUser);
       console.log('🔄 User data refreshed');
     }
   }, [mapFirebaseUser]);
@@ -276,7 +367,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         console.log('👤 Auth state changed: User signed in:', firebaseUser.email);
-        setUser(mapFirebaseUser(firebaseUser));
+        const mappedUser = await mapFirebaseUser(firebaseUser);
+        setUser(mappedUser);
+        console.log('👤 User MTAI ID:', mappedUser.mtaiId);
       } else {
         console.log('👤 Auth state changed: No user signed in');
         setUser(null);

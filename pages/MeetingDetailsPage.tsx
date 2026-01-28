@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping, User } from '../types';
+import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping, FirestoreUser } from '../types';
 import { getStatusBadgeClass, getStatusLabel } from '../hooks/useMeetings';
 
 /**
@@ -57,7 +57,7 @@ const MeetingDetailsPage: React.FC = () => {
   
   // Speaker mapping UI state (for needs_mapping status)
   const [speakers, setSpeakers] = useState<string[]>([]);
-  const [usersList, setUsersList] = useState<{ email: string; displayName: string }[]>([]);
+  const [usersList, setUsersList] = useState<FirestoreUser[]>([]);
   const [pendingMapping, setPendingMapping] = useState<SpeakerMapping>({});
   const [savingMapping, setSavingMapping] = useState(false);
   const [mappingError, setMappingError] = useState<string | null>(null);
@@ -248,16 +248,25 @@ const MeetingDetailsPage: React.FC = () => {
           }
         }
 
-        // Load all users for dropdown
+        // Load all users for dropdown (keyed by email, has mtaiId)
         const usersSnap = await getDocs(collection(db, 'users'));
-        const users: { email: string; displayName: string }[] = [];
-        usersSnap.forEach((doc) => {
-          const data = doc.data();
-          users.push({
-            email: doc.id,
-            displayName: data.displayName || doc.id.split('@')[0],
-          });
+        const users: FirestoreUser[] = [];
+        usersSnap.forEach((docSnap) => {
+          const data = docSnap.data();
+          // Only include users with MTAI IDs
+          if (data.mtaiId) {
+            users.push({
+              uid: data.uid || '',
+              mtaiId: data.mtaiId,
+              email: data.email || docSnap.id,
+              displayName: data.displayName || data.email?.split('@')[0] || 'User',
+              photoURL: data.photoURL || null,
+              authProviders: data.authProviders || [],
+            });
+          }
         });
+        // Sort by MTAI ID for consistency
+        users.sort((a, b) => a.mtaiId.localeCompare(b.mtaiId));
         setUsersList(users);
         console.log('[MeetingDetails] Users loaded for mapping:', users.length);
       } catch (err) {
@@ -581,7 +590,7 @@ const MeetingDetailsPage: React.FC = () => {
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-2xl border border-amber-200 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <span className="material-icons text-amber-600">people_alt</span>
-                <h3 className="font-bold text-lg text-amber-900">Map Speakers</h3>
+                <h3 className="font-bold text-lg text-amber-900">Map Speakers to Participants</h3>
               </div>
               <p className="text-sm text-amber-800 mb-4">
                 We detected {speakers.length} speaker{speakers.length !== 1 ? 's' : ''} in this meeting. 
@@ -599,33 +608,54 @@ const MeetingDetailsPage: React.FC = () => {
                   };
                   const colorClass = speakerColors[speakerId] || 'bg-slate-100 text-slate-700 border-slate-200';
                   
+                  // Find selected user for display
+                  const selectedMtaiId = pendingMapping[speakerId];
+                  const selectedUser = usersList.find(u => u.mtaiId === selectedMtaiId);
+                  
                   return (
                     <div key={speakerId} className="flex items-center gap-3">
-                      <span className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border ${colorClass}`}>
+                      <span className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border shrink-0 ${colorClass}`}>
                         {speakerId}
                       </span>
+                      <span className="text-slate-400 shrink-0">→</span>
                       <select
                         value={pendingMapping[speakerId] || ''}
                         onChange={(e) => handleMappingChange(speakerId, e.target.value)}
-                        className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                        className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 font-medium"
                       >
-                        <option value="">Select person...</option>
+                        <option value="">Select participant...</option>
                         {usersList.map((u) => (
-                          <option key={u.email} value={u.email}>
-                            {u.displayName} ({u.email})
+                          <option key={u.mtaiId} value={u.mtaiId}>
+                            [{u.mtaiId}] {u.displayName}
                           </option>
                         ))}
-                        {/* Option to add current user if not in list */}
-                        {user?.email && !usersList.find(u => u.email === user.email) && (
-                          <option value={user.email}>
-                            {user.displayName || 'Me'} ({user.email})
-                          </option>
-                        )}
                       </select>
                     </div>
                   );
                 })}
               </div>
+
+              {/* Selected mappings preview */}
+              {Object.values(pendingMapping).some(v => v) && (
+                <div className="mt-4 p-3 bg-white/60 rounded-lg border border-amber-100">
+                  <p className="text-xs font-semibold text-amber-700 mb-2">Preview:</p>
+                  <div className="space-y-1">
+                    {speakers.map((speakerId) => {
+                      const mtaiId = pendingMapping[speakerId];
+                      const selectedUser = usersList.find(u => u.mtaiId === mtaiId);
+                      if (!selectedUser) return null;
+                      return (
+                        <div key={speakerId} className="text-sm text-slate-700">
+                          <span className="font-medium">Speaker {speakerId}</span>
+                          <span className="text-slate-400 mx-2">→</span>
+                          <span className="text-indigo-600 font-mono text-xs">{selectedUser.mtaiId}</span>
+                          <span className="text-slate-500 ml-1">· {selectedUser.displayName}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {mappingError && (
                 <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
@@ -635,8 +665,8 @@ const MeetingDetailsPage: React.FC = () => {
 
               <button
                 onClick={saveSpeakerMapping}
-                disabled={savingMapping}
-                className="mt-4 w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white font-bold rounded-xl transition flex items-center justify-center gap-2"
+                disabled={savingMapping || !Object.values(pendingMapping).every(v => v)}
+                className="mt-4 w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 disabled:cursor-not-allowed text-white font-bold rounded-xl transition flex items-center justify-center gap-2"
               >
                 {savingMapping ? (
                   <>

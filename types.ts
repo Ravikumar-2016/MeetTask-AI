@@ -5,6 +5,22 @@ export interface User {
   displayName: string | null;
   photoURL: string | null;
   emailVerified?: boolean;
+  // Human-readable ID (MTAI001, MTAI002, etc.)
+  mtaiId?: string;
+  // Track all auth methods used
+  authProviders?: ('google' | 'password')[];
+}
+
+// Firestore user document (stored by email for deduplication)
+export interface FirestoreUser {
+  uid: string;
+  mtaiId: string;              // MTAI001, MTAI002, etc.
+  email: string;
+  displayName: string;
+  photoURL?: string | null;
+  authProviders: ('google' | 'password')[];
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'analyzing' | 'completed' | 'error';
@@ -12,9 +28,9 @@ export type FileType = 'image' | 'video' | 'audio';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
 
-// Speaker mapping: { "A": "email@example.com", "B": "other@example.com" }
+// Speaker mapping: { "A": "MTAI001", "B": "MTAI002" }
 export interface SpeakerMapping {
-  [speakerId: string]: string; // speakerId → user email
+  [speakerId: string]: string; // speakerId → mtaiId
 }
 
 export interface Meeting {

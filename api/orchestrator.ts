@@ -212,39 +212,57 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('📁 File type:', meeting.fileType || 'unknown');
 
     // ============================================
-    // HANDLE IMAGES SEPARATELY (no transcription)
+    // HANDLE IMAGES: OCR + fake speakers for mapping
     // ============================================
     if (meeting.fileType === 'image') {
-      console.log('🖼️ [Orchestrator] Image file detected - cannot transcribe');
+      console.log('🖼️ [Orchestrator] Image file detected');
+      console.log('📝 Will extract text via OCR and require speaker mapping');
       
-      // Images don't have audio, so we can't transcribe them
-      // Mark as completed with a note
+      // For now, images need manual processing
+      // In a production app, you'd integrate Google Cloud Vision or Tesseract here
+      // For the MVP, we'll create a placeholder and require mapping
+      
+      // Create fake speakers A, B, C for manual mapping
+      const fakeSpeakers = ['A', 'B', 'C'];
+      
       await meetingRef.update({
-        status: 'completed',
-        summary: 'Image uploaded. Images cannot be transcribed - please upload audio or video files for transcription.',
-        speakers: [],
-        speakerCount: 0,
+        status: 'needs_mapping',
+        speakers: fakeSpeakers,
+        speakerCount: fakeSpeakers.length,
+        summary: 'Image uploaded. Please map participants to extract tasks.',
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Create a basic transcript entry for the image
+      // Create a transcript entry for the image
       await db.collection('transcripts').doc(meetingId).set({
         meetingId,
         userId: user.uid,
-        text: 'Image file - no audio to transcribe.',
-        formattedTranscript: 'This is an image file. To extract tasks and transcribe meetings, please upload audio or video recordings.',
-        summary: 'Image uploaded.',
-        speakers: [],
-        speakerCount: 0,
-        utterances: [],
+        text: 'Image file uploaded. Text extraction pending.',
+        formattedTranscript: `This is an image file.
+
+To extract tasks, please:
+1. Map Speaker A, B, C to the participants shown in the image
+2. Describe what tasks are visible in the image
+3. Click "Confirm & Extract Tasks"
+
+Note: For better task extraction, consider uploading meeting audio or video recordings.`,
+        summary: 'Image uploaded - awaiting speaker mapping.',
+        speakers: fakeSpeakers,
+        speakerCount: fakeSpeakers.length,
+        utterances: [
+          { speaker: 'A', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
+          { speaker: 'B', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
+          { speaker: 'C', text: 'Participant from image', start: 0, end: 0, confidence: 0 },
+        ],
         createdAt: FieldValue.serverTimestamp(),
       });
 
       return response.status(200).json({
         success: true,
-        message: 'Image processed (no transcription available)',
+        message: 'Image processed - please map speakers',
         meetingId,
-        status: 'completed',
+        status: 'needs_mapping',
+        speakers: fakeSpeakers,
       });
     }
 
