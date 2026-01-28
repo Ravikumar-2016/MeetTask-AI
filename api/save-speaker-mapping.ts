@@ -7,7 +7,7 @@
  * 1. User maps speakers: { A: "MTAI001", B: "MTAI002" }
  * 2. Validates: No duplicates, creator excluded from assignment
  * 3. Saves mapping to transcript
- * 4. Uses LeMUR to extract tasks with correct assignments
+ * 4. Uses GEMINI to extract tasks with correct assignments
  * 5. Saves tasks to dedicated /tasks collection
  * 6. Triggers async email notifications
  * 7. Status → "completed"
@@ -74,18 +74,18 @@ interface EnhancedTask {
   assignedTo: string;          // MTAI ID
   assignedToName: string;
   assignedToEmail: string;
-  speakerId?: string;
+  speakerId: string | null;
   
   // Task details
   title: string;
   description: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   status: 'pending' | 'in_progress' | 'completed' | 'blocked';
-  dueDate?: string;
+  dueDate: string | null;
   
-  // AI extraction
-  confidence?: number;
-  sourceSentence?: string;
+  // AI extraction (use null not undefined for Firestore)
+  confidence: number | null;
+  sourceSentence: string | null;
   
   // Timestamps
   createdAt: any;
@@ -128,178 +128,159 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// TASK EXTRACTION WITH OPENAI (Primary)
+// TASK EXTRACTION WITH GEMINI (Primary & Only Method)
 // ============================================
-async function extractTasksWithOpenAI(
+async function extractTasksWithGemini(
   transcriptText: string,
   speakerMapping: SpeakerMapping,
   mtaiIdToName: Map<string, string>
 ): Promise<any[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   
   if (!apiKey) {
-    console.error('❌ OPENAI_API_KEY not configured');
+    console.error('❌ GEMINI_API_KEY not configured');
     return [];
   }
   
-  console.log('🤖 OpenAI: Extracting tasks...');
-  console.log('🗺️ OpenAI: Speaker mapping:', speakerMapping);
+  console.log('🤖 Gemini: Extracting tasks...');
+  console.log('🗺️ Gemini: Speaker mapping:', speakerMapping);
   
   // Build speaker info for prompt
   const speakerInfo = Object.entries(speakerMapping)
     .filter(([_, mtaiId]) => mtaiId)
     .map(([id, mtaiId]) => {
       const name = mtaiIdToName.get(mtaiId) || mtaiId;
-      return `Speaker ${id} = ${name} (${mtaiId})`;
+      return `Speaker ${id} = ${name} (ID: ${mtaiId})`;
     })
     .join('\n');
 
-  console.log('👥 OpenAI: Speaker info:\n', speakerInfo);
+  console.log('👥 Gemini: Speaker info:\n', speakerInfo);
 
-  const prompt = `Analyze this meeting transcript and extract ALL action items and tasks.
+  // Truncate transcript to fit context window (leave room for prompt)
+  const maxTranscriptLength = 25000;
+  const truncatedTranscript = transcriptText.length > maxTranscriptLength 
+    ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
+    : transcriptText;
+
+  const prompt = `You are a meeting assistant that extracts action items from meeting transcripts.
 
 SPEAKER MAPPING:
 ${speakerInfo}
 
-TRANSCRIPT:
-${transcriptText.substring(0, 12000)}
+MEETING TRANSCRIPT:
+${truncatedTranscript}
 
-For each task found, return a JSON object with:
-- title: Brief, actionable task title (max 80 chars)
-- description: Clear description of what needs to be done
-- assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person responsible
-- speakerId: The speaker ID (A, B, C) who is assigned
-- priority: "critical", "high", "medium", or "low"
-- dueDate: If mentioned (YYYY-MM-DD format), else null
-- sourceSentence: The exact quote from transcript that mentions this task
+TASK:
+Extract ALL action items and tasks from this meeting transcript. Look for:
+- Explicit commitments ("I'll do...", "I will...")
+- Assignments ("Can you...", "Please...")
+- Decisions that require follow-up
+- Deadlines mentioned
+
+For each task, return a JSON object with these exact fields:
+- "title": Brief, actionable task title (max 80 characters)
+- "description": Clear description of what needs to be done
+- "assignedToMtaiId": The MTAI ID (e.g., "MTAI001") of the person responsible based on speaker mapping
+- "speakerId": The speaker letter (A, B, C, etc.) who owns this task
+- "priority": One of "critical", "high", "medium", or "low"
+- "dueDate": If a deadline is mentioned, use YYYY-MM-DD format, otherwise null
+- "sourceSentence": The exact quote from the transcript that mentions this task
 
 PRIORITY GUIDELINES:
-- critical: Urgent, blocking other work
-- high: Important deadline, significant impact
-- medium: Normal priority
-- low: Nice-to-have
+- critical: Urgent, blocking other work, explicitly marked as priority
+- high: Important deadline mentioned, significant business impact
+- medium: Normal work items, standard priority
+- low: Nice-to-have, can be delayed, minor items
 
-RULES:
-- Only extract CLEAR action items (explicit commitments)
-- "I'll do X" → assign to that speaker
-- "Can you do X?" → assign to person being asked
-- Never invent tasks that weren't discussed
+IMPORTANT RULES:
+1. Only extract CLEAR action items with explicit commitments
+2. Match tasks to the correct speaker using the mapping above
+3. Never invent tasks that weren't discussed
+4. If no clear tasks are found, return an empty array []
+5. Return ONLY valid JSON - no markdown, no explanations
 
-Return ONLY a valid JSON array of tasks. No markdown, no explanation. If no tasks found, return [].`;
+Return your response as a JSON array of task objects:`;
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'You are a meeting assistant that extracts action items. Return only valid JSON arrays.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      }),
-    });
+    console.log('📤 Gemini: Sending request...');
+    
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            responseMimeType: 'application/json',
+          },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          ],
+        }),
+      }
+    );
 
-    console.log('📥 OpenAI: Response status:', res.status);
+    console.log('📥 Gemini: Response status:', res.status);
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.error('❌ OpenAI API error:', res.status, errorText);
+      console.error('❌ Gemini API error:', res.status, errorText);
       return [];
     }
 
     const data = await res.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    console.log('📄 OpenAI response (first 500 chars):', content.substring(0, 500));
+    
+    // Extract text from Gemini response
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    console.log('📄 Gemini response (first 500 chars):', content.substring(0, 500));
 
     // Parse JSON from response
     let tasks: any[] = [];
     try {
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        tasks = JSON.parse(jsonMatch[0]);
-        console.log('✅ OpenAI: Parsed', tasks.length, 'tasks');
-      } else {
-        console.warn('⚠️ OpenAI: No JSON array found');
+      // Try direct parse first (since we requested JSON mime type)
+      tasks = JSON.parse(content);
+      
+      // If not an array, try to find array in response
+      if (!Array.isArray(tasks)) {
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          tasks = JSON.parse(jsonMatch[0]);
+        } else {
+          console.warn('⚠️ Gemini: Response is not an array');
+          tasks = [];
+        }
       }
+      
+      console.log('✅ Gemini: Parsed', tasks.length, 'tasks');
     } catch (parseError: any) {
-      console.error('❌ Failed to parse OpenAI response:', parseError.message);
+      console.error('❌ Failed to parse Gemini response:', parseError.message);
+      // Try to find JSON array in response as fallback
+      try {
+        const jsonMatch = content.match(/\[[\s\S]*?\]/);
+        if (jsonMatch) {
+          tasks = JSON.parse(jsonMatch[0]);
+          console.log('✅ Gemini: Recovered', tasks.length, 'tasks from partial response');
+        }
+      } catch {
+        console.error('❌ Could not recover JSON from response');
+      }
     }
 
     return Array.isArray(tasks) ? tasks : [];
   } catch (error: any) {
-    console.error('❌ OpenAI extraction failed:', error.message);
+    console.error('❌ Gemini extraction failed:', error.message);
     return [];
   }
-}
-
-// ============================================
-// FALLBACK: Basic keyword extraction
-// ============================================
-function extractTasksBasic(
-  transcriptText: string,
-  speakerMapping: SpeakerMapping,
-  mtaiIdToName: Map<string, string>
-): any[] {
-  console.log('🔧 Using basic keyword extraction...');
-  
-  const tasks: any[] = [];
-  const lines = transcriptText.split('\n');
-  
-  // Keywords that indicate action items
-  const actionKeywords = [
-    /I['']ll\s+(.+)/i,
-    /I\s+will\s+(.+)/i,
-    /going\s+to\s+(.+)/i,
-    /need\s+to\s+(.+)/i,
-    /should\s+(.+)/i,
-    /can\s+you\s+(.+)/i,
-    /please\s+(.+)/i,
-    /action\s+item[:\s]+(.+)/i,
-    /todo[:\s]+(.+)/i,
-    /task[:\s]+(.+)/i,
-  ];
-
-  let currentSpeaker = 'A';
-  
-  for (const line of lines) {
-    // Track current speaker
-    const speakerMatch = line.match(/Speaker\s+([A-Z])/i);
-    if (speakerMatch) {
-      currentSpeaker = speakerMatch[1];
-    }
-    
-    // Check for action keywords
-    for (const pattern of actionKeywords) {
-      const match = line.match(pattern);
-      if (match && match[1] && match[1].length > 10) {
-        const mtaiId = speakerMapping[currentSpeaker] || Object.values(speakerMapping)[0] || '';
-        tasks.push({
-          title: match[1].substring(0, 80).trim(),
-          description: line.trim(),
-          assignedToMtaiId: mtaiId,
-          speakerId: currentSpeaker,
-          priority: 'medium',
-          dueDate: null,
-          sourceSentence: line.trim().substring(0, 200),
-        });
-        break; // Only one task per line
-      }
-    }
-  }
-  
-  // Deduplicate by title similarity
-  const uniqueTasks = tasks.filter((task, index, self) =>
-    index === self.findIndex(t => t.title.toLowerCase() === task.title.toLowerCase())
-  ).slice(0, 10); // Max 10 tasks from basic extraction
-  
-  console.log('🔧 Basic extraction found:', uniqueTasks.length, 'tasks');
-  return uniqueTasks;
 }
 
 // ============================================
@@ -426,8 +407,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('👥 Users found:', usersMap.size);
     console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
 
-    // Extract tasks using AI
-    console.log('🤖 Extracting tasks...');
+    // Extract tasks using Gemini AI
+    console.log('🤖 Extracting tasks with Gemini...');
     
     let extractedTasks: any[] = [];
     
@@ -436,26 +417,20 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('📄 Transcript length:', transcriptText.length, 'chars');
     
     if (transcriptText.length > 50) {
-      // Try OpenAI first (primary method)
-      if (process.env.OPENAI_API_KEY) {
+      if (process.env.GEMINI_API_KEY) {
         try {
-          extractedTasks = await extractTasksWithOpenAI(
+          extractedTasks = await extractTasksWithGemini(
             transcriptText,
             speakerMapping,
             mtaiIdToName
           );
-          console.log('✅ OpenAI extraction completed, tasks:', extractedTasks.length);
-        } catch (openaiError: any) {
-          console.error('❌ OpenAI extraction failed:', openaiError.message);
+          console.log('✅ Gemini extraction completed, tasks:', extractedTasks.length);
+        } catch (geminiError: any) {
+          console.error('❌ Gemini extraction failed:', geminiError.message);
+          // Don't fail the whole operation - just log and continue with 0 tasks
         }
       } else {
-        console.warn('⚠️ OPENAI_API_KEY not configured');
-      }
-      
-      // Fallback to basic extraction if AI failed
-      if (extractedTasks.length === 0) {
-        console.log('🔧 Falling back to basic keyword extraction...');
-        extractedTasks = extractTasksBasic(transcriptText, speakerMapping, mtaiIdToName);
+        console.error('❌ GEMINI_API_KEY not configured - cannot extract tasks');
       }
     } else {
       console.warn('⚠️ Transcript too short for task extraction');
@@ -469,15 +444,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     for (const task of extractedTasks) {
       const taskRef = db.collection('tasks').doc();
-      // Use mtaiId from LeMUR response or fall back to first speaker
+      // Use mtaiId from Gemini response or fall back to first speaker
       const assignedMtaiId = task.assignedToMtaiId || task.assignedTo || mtaiIds[0] || '';
       
-      // Normalize priority (handle "critical" from LLM)
+      // Normalize priority
       let priority = (task.priority || 'medium').toLowerCase();
       if (!['critical', 'high', 'medium', 'low'].includes(priority)) {
         priority = 'medium';
       }
       
+      // Build task data - IMPORTANT: No undefined values allowed in Firestore
       const taskData: EnhancedTask = {
         id: taskRef.id,
         meetingId,
@@ -485,14 +461,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
         
         // Ownership
         creatorId: userId,
-        creatorMtaiId: creatorMtaiId,
-        creatorName: creatorName,
+        creatorMtaiId: creatorMtaiId || '',
+        creatorName: creatorName || 'Meeting Organizer',
         
         // Assignment
         assignedTo: assignedMtaiId,
-        assignedToName: mtaiIdToName.get(assignedMtaiId) || assignedMtaiId,
+        assignedToName: mtaiIdToName.get(assignedMtaiId) || assignedMtaiId || '',
         assignedToEmail: mtaiIdToEmail.get(assignedMtaiId) || '',
-        speakerId: task.speakerId,
+        speakerId: task.speakerId || null,
         
         // Task details
         title: task.title || 'Untitled Task',
@@ -501,8 +477,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
         status: 'pending',
         dueDate: task.dueDate || null,
         
-        // AI extraction metadata
-        confidence: task.confidence,
+        // AI extraction metadata - use null instead of undefined
+        confidence: typeof task.confidence === 'number' ? task.confidence : null,
         sourceSentence: task.sourceSentence || null,
         
         // Timestamps
