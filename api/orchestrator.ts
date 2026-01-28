@@ -151,8 +151,8 @@ async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ 
   const base64Data = await downloadAsBase64(mediaUrl);
   const mimeType = getMimeType(mediaUrl, fileType);
 
-  // Use gemini-1.5-flash with inline base64 data
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Use gemini-1.5-flash-latest with inline base64 data
+  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -199,7 +199,7 @@ async function extractTextFromImage(imageUrl: string): Promise<{ text: string; w
   const base64Data = await downloadAsBase64(imageUrl);
   const mimeType = getMimeType(imageUrl, 'image');
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
