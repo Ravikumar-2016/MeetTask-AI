@@ -287,85 +287,101 @@ function extractSpeakerNamesFromOCR(detectedTexts: string[]): string[] {
   // Get the full text (first element contains all text)
   const fullText = detectedTexts[0] || '';
   
+  console.log('📋 [OCR] Raw full text:', fullText.substring(0, 500));
+  
   // Split by newlines to get individual lines (Zoom tiles have names on separate lines)
   const lines = fullText.split(/[\n\r]+/).map(l => l.trim()).filter(l => l.length > 0);
   
   console.log('📋 [OCR] Lines detected:', lines.length);
+  console.log('📋 [OCR] All lines:', lines.slice(0, 20));
   
-  // Filter words (UI elements) - be more permissive
-  const filterWords = new Set([
-    'zoom', 'mute', 'unmute', 'video off', 'start video', 'stop video',
-    'share screen', 'chat', 'record', 'recording', 'participants',
-    'leave', 'end meeting', 'reactions', 'raise hand', 'more',
-    'security', 'breakout rooms', 'polls', 'apps', 'live transcript',
-    'closed caption', 'cc', 'invite', 'manage participants',
-    'waiting room', 'in meeting', 'connecting', 'joining',
-  ]);
+  // UI elements to filter out - case insensitive
+  const filterWords = [
+    'zoom', 'mute', 'unmute', 'video', 'screen', 'share', 'chat', 'record', 
+    'recording', 'participant', 'leave', 'meeting', 'reaction', 'raise', 'hand',
+    'security', 'breakout', 'polls', 'apps', 'transcript', 'caption', 'cc', 
+    'invite', 'waiting', 'connecting', 'joining', 'gallery', 'view', 'settings',
+    'host', 'co-host', 'speaker', 'options', 'minimize', 'maximize',
+    'live', 'closed', 'more', 'end', 'start', 'stop', 'audio', 'mic', 'microphone',
+    // Common non-name text
+    'today', 'yesterday', 'meeting', 'call', 'conference', 'webinar',
+  ];
+  
+  // Helper: Check if a string looks like a person name
+  function looksLikeName(str: string): boolean {
+    // Clean up the string
+    const clean = str.trim();
+    
+    // Skip very short or very long
+    if (clean.length < 3 || clean.length > 35) return false;
+    
+    // Skip if starts with lowercase
+    if (/^[a-z]/.test(clean)) return false;
+    
+    // Skip if mostly numbers or symbols
+    if (!/[a-zA-Z]{2,}/.test(clean)) return false;
+    
+    // Skip UI elements
+    const lower = clean.toLowerCase();
+    if (filterWords.some(w => lower.includes(w))) return false;
+    
+    // Skip single words (names usually have first + last)
+    const words = clean.split(/\s+/);
+    if (words.length < 2) return false;
+    if (words.length > 4) return false;
+    
+    // Check if looks like "First Last" format
+    // More permissive - allow mixed case, apostrophes, hyphens
+    const validWordPattern = /^[A-Z][a-zA-Z'-]{1,20}$/;
+    
+    // At least 2 words should look like name parts
+    const nameWords = words.filter(w => validWordPattern.test(w));
+    return nameWords.length >= 2;
+  }
+  
+  // Helper: Extract name part (handle "Name - Title" format)
+  function extractNamePart(line: string): string {
+    // Split by common separators (dash, pipe, parentheses)
+    const parts = line.split(/\s*[-–—|]\s*|\s*\(.*\)/);
+    return parts[0].trim();
+  }
   
   for (const line of lines) {
-    // Skip very short or very long strings
-    if (line.length < 4 || line.length > 40) continue;
+    const candidate = extractNamePart(line);
     
-    const lowerLine = line.toLowerCase();
-    
-    // Skip if it's a UI element
-    if ([...filterWords].some(w => lowerLine.includes(w))) continue;
-    
-    // Skip if mostly numbers, special chars, or single words
-    if (/^\d+$/.test(line) || /^[^a-zA-Z]+$/.test(line)) continue;
-    
-    // Look for name patterns
-    // Pattern 1: "FirstName LastName" (exactly 2-3 capitalized words)
-    const words = line.split(/\s+/);
-    
-    // Pattern 2: "Name - Title" or "Name — Title" (take part before dash)
-    const beforeDash = line.split(/\s*[-–—]\s*/)[0].trim();
-    const dashWords = beforeDash.split(/\s+/);
-    
-    // Try the part before dash first
-    if (dashWords.length >= 2 && dashWords.length <= 3) {
-      const allCapitalized = dashWords.every(w => /^[A-Z][a-z]+$/.test(w));
-      if (allCapitalized && !names.includes(beforeDash)) {
-        console.log('✅ [OCR] Found name (dash pattern):', beforeDash);
-        names.push(beforeDash);
-        continue;
-      }
-    }
-    
-    // Try full line if 2-3 words
-    if (words.length >= 2 && words.length <= 3) {
-      const allCapitalized = words.every(w => /^[A-Z][a-z]+$/.test(w));
-      if (allCapitalized && !names.includes(line)) {
-        console.log('✅ [OCR] Found name (full line):', line);
-        names.push(line);
-        continue;
-      }
-    }
-    
-    // Pattern 3: Less strict - just look for "Firstname L" or "F. Lastname" patterns
-    const namePattern = /^([A-Z][a-z]+)\s+([A-Z][a-z]+|[A-Z]\.)$/;
-    const match = line.match(namePattern);
-    if (match && !names.includes(line)) {
-      console.log('✅ [OCR] Found name (pattern match):', line);
-      names.push(line);
+    if (looksLikeName(candidate) && !names.includes(candidate)) {
+      console.log('✅ [OCR] Found name:', candidate, '(from line:', line, ')');
+      names.push(candidate);
     }
   }
   
-  // Also check individual detected text items (not just the full text)
-  for (let i = 1; i < detectedTexts.length; i++) {
+  // Also check individual text annotations (bounding boxes often have cleaner text)
+  for (let i = 1; i < Math.min(detectedTexts.length, 100); i++) {
     const text = detectedTexts[i]?.trim();
-    if (!text || text.length < 4 || text.length > 40) continue;
+    if (!text) continue;
     
-    const words = text.split(/\s+/);
-    if (words.length === 2 || words.length === 3) {
-      const allCapitalized = words.every(w => /^[A-Z][a-z]+$/.test(w));
-      if (allCapitalized && !names.includes(text)) {
-        // Extra check: not a common phrase
-        const lowerText = text.toLowerCase();
-        if (!['thank you', 'good morning', 'good afternoon', 'see you'].some(p => lowerText.includes(p))) {
-          console.log('✅ [OCR] Found name (individual item):', text);
-          names.push(text);
-        }
+    const candidate = extractNamePart(text);
+    
+    if (looksLikeName(candidate) && !names.includes(candidate)) {
+      console.log('✅ [OCR] Found name (annotation):', candidate);
+      names.push(candidate);
+    }
+  }
+  
+  // SPECIAL: Look for patterns in the full text that might be missed
+  // Pattern: Names often appear near the bottom of video tiles
+  // They might be close together in OCR output
+  const fullTextWords = fullText.split(/\s+/);
+  for (let i = 0; i < fullTextWords.length - 1; i++) {
+    const word1 = fullTextWords[i];
+    const word2 = fullTextWords[i + 1];
+    
+    // Check if two consecutive words form a name
+    if (/^[A-Z][a-z]+$/.test(word1) && /^[A-Z][a-z]+$/.test(word2)) {
+      const potentialName = `${word1} ${word2}`;
+      if (looksLikeName(potentialName) && !names.includes(potentialName)) {
+        console.log('✅ [OCR] Found name (consecutive words):', potentialName);
+        names.push(potentialName);
       }
     }
   }
