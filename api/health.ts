@@ -69,6 +69,7 @@ export default async function handler(
   return response.status(200).json({
     status: coreConfigured ? 'healthy' : 'missing_config',
     timestamp: new Date().toISOString(),
+    architecture: 'ASYNC (webhook-based)',
     environment: {
       ...envStatus,
       coreConfigured,
@@ -76,13 +77,17 @@ export default async function handler(
     features: {
       audioTranscription: !!process.env.ASSEMBLYAI_API_KEY,
       speakerDiarization: !!process.env.ASSEMBLYAI_API_KEY,
-      videoOcr: '✅ Tesseract.js (FREE - no API key needed)',
-      taskExtraction: !!process.env.ASSEMBLYAI_API_KEY,
+      taskExtraction: '✅ LeMUR (via AssemblyAI)',
+      asyncProcessing: '✅ Webhook-based (no timeouts)',
     },
+    flow: [
+      '1. /api/orchestrator → submit job → return immediately',
+      '2. AssemblyAI processes async (1-5 min)',
+      '3. /api/webhook/assemblyai → save results',
+    ],
     firebase: firebaseStatus,
-    ocrEngine: 'Tesseract.js (open-source, unlimited, free)',
     message: coreConfigured 
-      ? 'All features enabled! Video OCR uses Tesseract.js (free, no API key)'
+      ? 'Async architecture ready! No more timeouts.'
       : 'Some environment variables are missing. Check Vercel Dashboard > Settings > Environment Variables',
   });
 }

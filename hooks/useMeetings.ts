@@ -225,6 +225,8 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
     case 'completed':
       return 'bg-emerald-100 text-emerald-700';
     case 'processing':
+    case 'transcribing':
+    case 'analyzing':
       return 'bg-blue-100 text-blue-700 animate-pulse';
     case 'uploaded':
       return 'bg-amber-100 text-amber-700';
@@ -232,6 +234,28 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
       return 'bg-rose-100 text-rose-700';
     default:
       return 'bg-slate-100 text-slate-700';
+  }
+};
+
+/**
+ * Get human-readable status label
+ */
+export const getStatusLabel = (status: MeetingStatus): string => {
+  switch (status) {
+    case 'completed':
+      return 'COMPLETED';
+    case 'transcribing':
+      return 'TRANSCRIBING...';
+    case 'analyzing':
+      return 'ANALYZING...';
+    case 'processing':
+      return 'PROCESSING';
+    case 'uploaded':
+      return 'UPLOADED';
+    case 'error':
+      return 'ERROR';
+    default:
+      return status?.toUpperCase() || 'UNKNOWN';
   }
 };
 

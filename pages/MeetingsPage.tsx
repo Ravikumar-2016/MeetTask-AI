@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMeetings, getStatusBadgeClass, getFileTypeIcon } from '../hooks/useMeetings';
+import { useMeetings, getStatusBadgeClass, getFileTypeIcon, getStatusLabel } from '../hooks/useMeetings';
 import { processMeeting } from '../services/api';
 
 const MeetingsPage: React.FC = () => {
@@ -164,7 +164,7 @@ const MeetingsPage: React.FC = () => {
                     </button>
                   )}
                   <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStatusBadgeClass(meeting.status)}`}>
-                    {meeting.status}
+                    {getStatusLabel(meeting.status)}
                   </span>
                   <span className="material-icons text-slate-300">chevron_right</span>
                 </div>

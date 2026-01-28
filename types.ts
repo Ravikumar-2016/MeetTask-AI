@@ -7,7 +7,7 @@ export interface User {
   emailVerified?: boolean;
 }
 
-export type MeetingStatus = 'uploaded' | 'processing' | 'completed' | 'error';
+export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'analyzing' | 'completed' | 'error';
 export type FileType = 'image' | 'video' | 'audio';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
@@ -23,6 +23,7 @@ export interface Meeting {
   userId: string;
   taskCount?: number;
   errorMessage?: string;
+  transcriptId?: string; // AssemblyAI transcript ID
   createdAt?: string;
   updatedAt?: string;
   // Speaker diarization fields
