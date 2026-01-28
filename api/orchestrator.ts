@@ -881,10 +881,15 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     console.log('   - Audio speakers:', [...new Set(utterances.map(u => u.speaker))]);
     
     // Step 2: Run video analysis with timeout (if video type)
-    // Video OCR is optional - don't let it block the pipeline
+    // Video OCR is optional - can be disabled via DISABLE_VIDEO_OCR env var
+    // Tesseract.js can be slow on serverless, so we have timeouts
     let videoResult: VideoAnalysisResult = { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 };
     
-    if (fileType === 'video' && duration > 0) {
+    const disableVideoOcr = process.env.DISABLE_VIDEO_OCR === 'true';
+    
+    if (disableVideoOcr) {
+      console.log('⏭️ [Pipeline] Video OCR disabled via DISABLE_VIDEO_OCR env var');
+    } else if (fileType === 'video' && duration > 0) {
       console.log('🔄 [Pipeline] Step 2: Video analysis for speaker names (45s timeout)...');
       try {
         // Wrap entire video analysis in 45 second timeout
