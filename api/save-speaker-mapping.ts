@@ -24,6 +24,16 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // ============================================
+// GEMINI MODEL CONSTANTS
+// ============================================
+const GEMINI_MODELS = {
+  TEXT: 'models/gemini-1.5-pro',           // For text-only tasks (task extraction)
+  VISION: 'models/gemini-1.5-pro-vision',  // For image OCR (not used here)
+} as const;
+
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+// ============================================
 // FIREBASE ADMIN SETUP
 // ============================================
 function initAdmin() {
@@ -203,38 +213,40 @@ Return your response as a JSON array of task objects:`;
 
   try {
     console.log('📤 Gemini: Sending request...');
+    console.log('🔧 Gemini: Model:', GEMINI_MODELS.TEXT);
     
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+    const endpoint = `${GEMINI_API_BASE}/${GEMINI_MODELS.TEXT}:generateContent?key=${apiKey}`;
+    
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 4096,
         },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 4096,
-            responseMimeType: 'application/json',
-          },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          ],
-        }),
-      }
-    );
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
+      }),
+    });
 
     console.log('📥 Gemini: Response status:', res.status);
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.error('❌ Gemini API error:', res.status, errorText);
+      console.error('❌ Gemini API error:', res.status);
+      console.error('❌ Model:', GEMINI_MODELS.TEXT);
+      console.error('❌ Endpoint:', endpoint.replace(apiKey, 'API_KEY_HIDDEN'));
+      console.error('❌ Response:', errorText);
       return [];
     }
 
