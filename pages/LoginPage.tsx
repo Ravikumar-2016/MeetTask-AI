@@ -89,7 +89,8 @@ const LoginPage: React.FC = () => {
     if (authLoading) return;
     
     if (user) {
-      const isVerified = user.authProvider === 'google' || user.emailVerified;
+      const isGoogleUser = user.authProviders?.includes('google') ?? false;
+      const isVerified = isGoogleUser || user.emailVerified;
       
       if (isVerified) {
         console.log('✅ User verified, redirecting to:', from);
@@ -251,7 +252,8 @@ const LoginPage: React.FC = () => {
     try {
       await refreshUser();
       // If still not verified after refresh
-      if (user && !user.emailVerified && user.authProvider !== 'google') {
+      const isGoogleUser = user?.authProviders?.includes('google') ?? false;
+      if (user && !user.emailVerified && !isGoogleUser) {
         setError('Email not verified yet. Please check your inbox and click the verification link.');
       }
     } catch (err: any) {

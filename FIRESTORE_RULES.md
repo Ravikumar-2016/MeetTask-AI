@@ -1,10 +1,15 @@
 # Firestore Security Rules Setup
 
-## Important: Set Up Firestore Rules
+## MeetTask AI Database Architecture
 
-The "Missing or insufficient permissions" error occurs because Firestore has default restrictive security rules. You need to update them in the Firebase Console.
+### Collections:
+- `users/{mtaiId}` - User documents (MTAI001, MTAI002, etc.)
+- `counters/users` - Counter for MTAI ID generation (`{ lastId: number }`)
+- `meetings/{meetingId}` - Meeting documents
+- `transcripts/{meetingId}` - Transcript documents
+- `tasks/{taskId}` - Task documents
 
-## Steps to Fix:
+## Steps to Set Up Rules:
 
 ### 1. Go to Firebase Console
 - Visit: https://console.firebase.google.com
@@ -14,45 +19,92 @@ The "Missing or insufficient permissions" error occurs because Firestore has def
 - Click on **Firestore Database** in the left sidebar
 - Click on the **Rules** tab
 
-### 3. Update Security Rules
-
-Replace the existing rules with these development-friendly rules:
+### 3. Copy These Security Rules
 
 ```javascript
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Users collection - authenticated users can read/write their own data
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
-    // Meetings collection - users can only access their own meetings
-    // IMPORTANT: For queries to work, we need to allow reads where the query
-    // filters by userId matching the authenticated user's uid
+    // ============================================
+    // COUNTERS - For MTAI ID generation
+    // ============================================
+    match /counters/{counterId} {
+      // Anyone authenticated can read/write counters
+      // This allows the transaction to increment lastId
+      allow read, write: if isAuthenticated();
+    }
+    
+    // ============================================
+    // USERS - Stored by MTAI ID (users/{mtaiId})
+    // ============================================
+    match /users/{mtaiId} {
+      // Any authenticated user can read any user (for speaker mapping dropdown)
+      allow read: if isAuthenticated();
+      
+      // Users can create their own document (checked by matching uid in data)
+      allow create: if isAuthenticated() && 
+                       request.resource.data.uid == request.auth.uid;
+      
+      // Users can update their own document (checked by matching uid in data)
+      allow update: if isAuthenticated() && 
+                       resource.data.uid == request.auth.uid;
+      
+      // No client-side deletion
+      allow delete: if false;
+    }
+    
+    // ============================================
+    // MEETINGS - User's meetings
+    // ============================================
     match /meetings/{meetingId} {
-      // Allow read if user is authenticated AND either:
-      // 1. Reading a specific doc where userId matches, OR
-      // 2. Query includes where('userId', '==', auth.uid)
-      allow read: if request.auth != null && 
+      // Users can read their own meetings
+      allow read: if isAuthenticated() && 
                     (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+      
+      // Users can create meetings with their userId
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Users can update/delete their own meetings
+      allow update, delete: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
     }
     
-    // Transcripts collection - linked to meetings, users access via backend
-    // Note: Transcripts are created/updated by backend with Admin SDK
-    // Frontend can read transcripts for meetings they own
+    // ============================================
+    // TRANSCRIPTS - Linked to meetings
+    // ============================================
     match /transcripts/{meetingId} {
-      allow read: if request.auth != null;
-      allow write: if false; // Only backend (Admin SDK) can write
+      // Users can read transcripts (backend creates them)
+      allow read: if isAuthenticated();
+      
+      // Only backend (Admin SDK) can write transcripts
+      allow write: if false;
     }
     
-    // Tasks collection - users can only access tasks from their meetings
+    // ============================================
+    // TASKS - User's tasks
+    // ============================================
     match /tasks/{taskId} {
-      allow read, write: if request.auth != null;
+      // Users can read their own tasks
+      allow read: if isAuthenticated() && 
+                    (resource == null || resource.data.userId == request.auth.uid);
+      
+      // Users can create tasks with their userId
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid;
+      
+      // Users can update/delete their own tasks
+      allow update, delete: if isAuthenticated() && 
+                               resource.data.userId == request.auth.uid;
     }
   }
 }
@@ -62,65 +114,47 @@ service cloud.firestore {
 - Click **Publish** button
 - Wait for confirmation
 
-## For Production (Later):
+## Database Structure
 
-When deploying to production, use stricter rules:
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    
-    // Helper function to check if user is authenticated
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    // Helper function to check if user owns the resource
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    // Users collection
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isOwner(userId);
-      allow delete: if false; // Prevent user deletion from client
-    }
-    
-    // Meetings collection
-    // NOTE: For queries with where('userId', '==', uid) to work,
-    // we check (resource == null || ...) to allow query evaluation
-    match /meetings/{meetingId} {
-      allow read: if isAuthenticated() && 
-                    (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if isAuthenticated() && 
-                       request.resource.data.userId == request.auth.uid &&
-                       request.resource.data.keys().hasAll(['title', 'audioUrl', 'status', 'userId']);
-      allow update: if isOwner(resource.data.userId) &&
-                       request.resource.data.userId == resource.data.userId; // Prevent ownership change
-      allow delete: if isOwner(resource.data.userId);
-    }
-    
-    // Transcripts collection - managed by backend only
-    match /transcripts/{meetingId} {
-      // Users can read transcripts for meetings they own
-      // We verify ownership by checking the linked meeting
-      allow read: if isAuthenticated();
-      allow write: if false; // Only backend (Admin SDK) can write
-    }
-    
-    // Tasks collection
-    match /tasks/{taskId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() &&
-                       request.resource.data.keys().hasAll(['meetingId', 'title', 'status']);
-      allow update, delete: if isAuthenticated();
-    }
-  }
+### users/{mtaiId}
+```json
+{
+  "uid": "firebase_auth_uid",
+  "mtaiId": "MTAI001",
+  "displayName": "Ravi Kumar",
+  "email": "ravi@gmail.com",
+  "authProviders": ["google", "password"],
+  "photoURL": "https://...",
+  "createdAt": "2026-01-28T..."
 }
 ```
+
+### counters/users
+```json
+{
+  "lastId": 3
+}
+```
+
+### meetings/{meetingId}
+```json
+{
+  "id": "abc123",
+  "title": "Team Standup",
+  "userId": "firebase_auth_uid",
+  "ownerMtaiId": "MTAI001",
+  "status": "completed",
+  "speakerMapping": { "A": "MTAI001", "B": "MTAI002" }
+}
+```
+
+## Key Points
+
+1. **Users are stored by MTAI ID** (`users/MTAI001`), not by Firebase UID
+2. **Counter at `counters/users`** tracks the last assigned ID number
+3. **Email deduplication**: Same email = same user, even with different auth providers
+4. **UID is stored inside the document** for permission checks
+5. **Frontend never shows Firebase UIDs** - only MTAI IDs are displayed
 
 ## Testing Rules
 

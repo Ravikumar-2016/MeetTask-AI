@@ -36,7 +36,8 @@ const ProtectedRoute: React.FC = () => {
 
   // Check if user is verified
   // Google users are always verified, email users need emailVerified = true
-  const isVerified = user.authProvider === 'google' || user.emailVerified;
+  const isGoogleUser = user.authProviders?.includes('google') ?? false;
+  const isVerified = isGoogleUser || user.emailVerified;
 
   if (!isVerified) {
     console.log('🚫 Access denied: Email not verified');

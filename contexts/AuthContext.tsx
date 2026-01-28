@@ -1,17 +1,20 @@
 /**
- * AuthContext.tsx - Production-ready Firebase Authentication
+ * AuthContext.tsx - Authentication System for MeetTask AI
  * 
- * Features:
+ * ARCHITECTURE:
+ * - Firebase Auth = Authentication only (Google, Email/Password)
+ * - Firestore = User database
+ * 
+ * STORAGE:
+ * - users/{mtaiId}     → User documents (MTAI001, MTAI002, etc.)
+ * - counters/users     → { lastId: number } for ID generation
+ * 
+ * FEATURES:
  * - Human-readable MTAI IDs (MTAI001, MTAI002, etc.)
- * - User deduplication by email (same person = one user)
- * - Email/Password signup with email verification
- * - Password reset via Firebase
- * - Google OAuth (auto-verified)
- * - Auth provider linking (google + password = same user)
- * 
- * Note: Firebase has Email Enumeration Protection enabled by default (since 2023),
- * which makes fetchSignInMethodsForEmail return empty arrays. We handle auth
- * errors directly instead.
+ * - Email deduplication (same email = same user)
+ * - Provider merging (Google + Password = same user)
+ * - Email verification for password signups
+ * - Password reset
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
@@ -26,20 +29,26 @@ import {
   User as FirebaseUser,
   AuthError
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, query, where, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  runTransaction, 
+  serverTimestamp 
+} from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
-import { User, FirestoreUser } from '../types';
+import { User, FirestoreUser, AuthProvider as AuthProviderType } from '../types';
 
-// Extended User type with verification and provider info
-interface ExtendedUser extends User {
-  emailVerified: boolean;
-  authProvider: 'email' | 'google';
-  mtaiId: string;
-}
+// ============================================
+// TYPES
+// ============================================
 
-// Auth context interface
 interface AuthContextType {
-  user: ExtendedUser | null;
+  user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
@@ -50,7 +59,10 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
 }
 
-// Default context value
+// ============================================
+// CONTEXT
+// ============================================
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
@@ -63,9 +75,10 @@ const AuthContext = createContext<AuthContextType>({
   refreshUser: async () => {}
 });
 
-/**
- * Get user-friendly error message from Firebase Auth error
- */
+// ============================================
+// ERROR HANDLING
+// ============================================
+
 const getAuthErrorMessage = (error: AuthError): string => {
   const errorMessages: Record<string, string> = {
     'auth/user-not-found': 'No account found with this email. Please sign up first.',
@@ -80,18 +93,22 @@ const getAuthErrorMessage = (error: AuthError): string => {
     'auth/popup-blocked': 'Popup was blocked by your browser. Please allow popups for this site.',
     'auth/account-exists-with-different-credential': 'An account already exists with this email using a different sign-in method.',
     'auth/network-request-failed': 'Network error. Please check your internet connection.',
-    'auth/operation-not-allowed': 'This sign-in method is not enabled. Please contact support.',
-    'auth/requires-recent-login': 'Please sign in again to complete this action.'
   };
 
   return errorMessages[error.code] || error.message || 'An unexpected error occurred. Please try again.';
 };
 
+// ============================================
+// MTAI ID GENERATION
+// ============================================
+
 /**
- * Generate next MTAI ID (MTAI001, MTAI002, etc.)
+ * Generate next sequential MTAI ID
+ * Uses Firestore transaction to ensure uniqueness
+ * Counter stored at: counters/users → { lastId: number }
  */
 const generateMtaiId = async (): Promise<string> => {
-  const counterRef = doc(db, 'system', 'counters');
+  const counterRef = doc(db, 'counters', 'users');
   
   try {
     const newId = await runTransaction(db, async (transaction) => {
@@ -99,30 +116,59 @@ const generateMtaiId = async (): Promise<string> => {
       
       let nextNumber = 1;
       if (counterDoc.exists()) {
-        nextNumber = (counterDoc.data().userCount || 0) + 1;
+        nextNumber = (counterDoc.data().lastId || 0) + 1;
       }
       
-      transaction.set(counterRef, { userCount: nextNumber }, { merge: true });
+      // Update counter
+      transaction.set(counterRef, { lastId: nextNumber });
       
+      // Format: MTAI001, MTAI002, etc.
       return `MTAI${nextNumber.toString().padStart(3, '0')}`;
     });
     
-    console.log('✅ Generated MTAI ID:', newId);
+    console.log('✅ [Auth] Generated MTAI ID:', newId);
     return newId;
   } catch (error) {
-    // Fallback: use timestamp-based ID
-    console.warn('⚠️ Counter transaction failed, using fallback');
-    return `MTAI${Date.now().toString().slice(-6)}`;
+    console.error('❌ [Auth] Counter transaction failed:', error);
+    throw new Error('Failed to generate user ID. Please try again.');
+  }
+};
+
+// ============================================
+// USER LOOKUP
+// ============================================
+
+/**
+ * Find existing user by email (for deduplication)
+ * Queries users collection where email matches
+ */
+const findUserByEmail = async (email: string): Promise<{ mtaiId: string; data: FirestoreUser } | null> => {
+  try {
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('email', '==', email));
+    const snapshot = await getDocs(q);
+    
+    if (!snapshot.empty) {
+      const doc = snapshot.docs[0];
+      return {
+        mtaiId: doc.id,
+        data: doc.data() as FirestoreUser
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ [Auth] Error finding user by email:', error);
+    return null;
   }
 };
 
 /**
- * Find existing user by email (for deduplication)
+ * Get user by MTAI ID
  */
-const findUserByEmail = async (email: string): Promise<FirestoreUser | null> => {
+const getUserByMtaiId = async (mtaiId: string): Promise<FirestoreUser | null> => {
   try {
-    // First check in users collection by email document ID
-    const userRef = doc(db, 'users', email);
+    const userRef = doc(db, 'users', mtaiId);
     const userSnap = await getDoc(userRef);
     
     if (userSnap.exists()) {
@@ -131,200 +177,214 @@ const findUserByEmail = async (email: string): Promise<FirestoreUser | null> => 
     
     return null;
   } catch (error) {
-    console.warn('⚠️ Error finding user by email:', error);
+    console.error('❌ [Auth] Error getting user by MTAI ID:', error);
     return null;
   }
 };
 
+// ============================================
+// AUTH PROVIDER COMPONENT
+// ============================================
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<ExtendedUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   /**
-   * Convert Firebase User to our ExtendedUser type (with MTAI ID lookup)
+   * Create or update user in Firestore
+   * 
+   * LOGIC:
+   * 1. Check if user exists by email (deduplication)
+   * 2. If exists: merge auth providers, update UID
+   * 3. If new: generate MTAI ID, create document at users/{mtaiId}
    */
-  const mapFirebaseUser = useCallback(async (firebaseUser: FirebaseUser): Promise<ExtendedUser> => {
-    // Determine auth provider from providerData
-    const isGoogleUser = firebaseUser.providerData.some(
-      provider => provider.providerId === 'google.com'
-    );
+  const saveUserToFirestore = useCallback(async (
+    firebaseUser: FirebaseUser,
+    provider: AuthProviderType
+  ): Promise<string> => {
+    if (!firebaseUser.email) {
+      throw new Error('Email is required for account creation');
+    }
 
-    // Look up MTAI ID from Firestore
-    let mtaiId = 'MTAI000';
-    if (firebaseUser.email) {
-      const existingUser = await findUserByEmail(firebaseUser.email);
-      if (existingUser) {
-        mtaiId = existingUser.mtaiId;
-      }
+    const email = firebaseUser.email;
+    console.log('📝 [Auth] Saving user to Firestore:', email, 'provider:', provider);
+
+    // Check if user already exists by email
+    const existingUser = await findUserByEmail(email);
+
+    if (existingUser) {
+      // EXISTING USER - merge auth providers
+      console.log('👤 [Auth] Existing user found:', existingUser.mtaiId);
+      
+      const existingProviders = existingUser.data.authProviders || [];
+      const updatedProviders = existingProviders.includes(provider)
+        ? existingProviders
+        : [...existingProviders, provider];
+
+      // Update existing document
+      const userRef = doc(db, 'users', existingUser.mtaiId);
+      await setDoc(userRef, {
+        uid: firebaseUser.uid,  // Update to latest UID
+        displayName: firebaseUser.displayName || existingUser.data.displayName,
+        photoURL: firebaseUser.photoURL || existingUser.data.photoURL,
+        authProviders: updatedProviders,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      console.log('✅ [Auth] User updated, providers:', updatedProviders);
+      return existingUser.mtaiId;
+    } else {
+      // NEW USER - generate MTAI ID and create document
+      console.log('🆕 [Auth] Creating new user...');
+      
+      const mtaiId = await generateMtaiId();
+      
+      const userData: FirestoreUser = {
+        uid: firebaseUser.uid,
+        mtaiId: mtaiId,
+        email: email,
+        displayName: firebaseUser.displayName || email.split('@')[0],
+        photoURL: firebaseUser.photoURL || null,
+        authProviders: [provider],
+        createdAt: serverTimestamp()
+      };
+
+      // Create document at users/{mtaiId}
+      const userRef = doc(db, 'users', mtaiId);
+      await setDoc(userRef, userData);
+
+      console.log('✅ [Auth] New user created:', mtaiId);
+      return mtaiId;
+    }
+  }, []);
+
+  /**
+   * Build User object from Firebase Auth + Firestore
+   */
+  const buildUserObject = useCallback(async (firebaseUser: FirebaseUser): Promise<User | null> => {
+    if (!firebaseUser.email) {
+      console.warn('⚠️ [Auth] User has no email');
+      return null;
+    }
+
+    // Find user in Firestore
+    const existingUser = await findUserByEmail(firebaseUser.email);
+    
+    if (!existingUser) {
+      console.warn('⚠️ [Auth] User not found in Firestore');
+      return null;
     }
 
     return {
       uid: firebaseUser.uid,
+      mtaiId: existingUser.mtaiId,
       email: firebaseUser.email,
-      displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-      photoURL: firebaseUser.photoURL,
+      displayName: existingUser.data.displayName || firebaseUser.email.split('@')[0],
+      photoURL: existingUser.data.photoURL || null,
       emailVerified: firebaseUser.emailVerified,
-      authProvider: isGoogleUser ? 'google' : 'email',
-      mtaiId
+      authProviders: existingUser.data.authProviders
     };
   }, []);
 
-  /**
-   * Create or update user document in Firestore
-   * KEY: Uses email as document ID for deduplication
-   * Merges auth providers if same email signs up multiple ways
-   * MIGRATION: Also migrates users from old UID-based storage
-   */
-  const saveUserToFirestore = useCallback(async (firebaseUser: FirebaseUser) => {
-    if (!firebaseUser.email) {
-      console.warn('⚠️ No email for user, skipping Firestore save');
-      return;
-    }
-
-    try {
-      const email = firebaseUser.email;
-      const userRef = doc(db, 'users', email); // KEY: email as document ID
-      const userSnap = await getDoc(userRef);
-      
-      const isGoogleUser = firebaseUser.providerData.some(p => p.providerId === 'google.com');
-      const currentProvider: 'google' | 'password' = isGoogleUser ? 'google' : 'password';
-
-      // Check for old UID-based user document (migration)
-      let existingData: FirestoreUser | null = null;
-      let needsMigration = false;
-      
-      if (userSnap.exists()) {
-        existingData = userSnap.data() as FirestoreUser;
-      } else {
-        // Check if user exists under old UID-based key
-        const oldUserRef = doc(db, 'users', firebaseUser.uid);
-        const oldUserSnap = await getDoc(oldUserRef);
-        
-        if (oldUserSnap.exists()) {
-          console.log('📦 Found old UID-based user, will migrate to email-based');
-          existingData = oldUserSnap.data() as FirestoreUser;
-          needsMigration = true;
-        }
-      }
-
-      if (existingData) {
-        // EXISTING USER - merge auth providers + ensure MTAI ID exists
-        const existingProviders = existingData.authProviders || [];
-        
-        // Add current provider if not already in list
-        const updatedProviders = existingProviders.includes(currentProvider)
-          ? existingProviders
-          : [...existingProviders, currentProvider];
-
-        // Generate MTAI ID if user doesn't have one (migration for old users)
-        let mtaiId = existingData.mtaiId;
-        if (!mtaiId) {
-          console.log('📋 Generating MTAI ID for existing user...');
-          mtaiId = await generateMtaiId();
-        }
-
-        await setDoc(userRef, {
-          mtaiId, // Keep existing or newly generated
-          uid: firebaseUser.uid, // Update to latest UID
-          email: email,
-          displayName: firebaseUser.displayName || existingData.displayName || email.split('@')[0],
-          photoURL: firebaseUser.photoURL || existingData.photoURL || null,
-          authProviders: updatedProviders,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-        
-        console.log('✅ User merged, MTAI ID:', mtaiId, 'providers:', updatedProviders);
-        
-        // If we migrated from UID-based, we could optionally delete the old document
-        // For now, leave it for backward compatibility
-        if (needsMigration) {
-          console.log('✅ User migrated from UID to email-based storage');
-        }
-      } else {
-        // NEW USER - generate MTAI ID
-        const mtaiId = await generateMtaiId();
-        
-        const userData: FirestoreUser = {
-          uid: firebaseUser.uid,
-          mtaiId,
-          email: email,
-          displayName: firebaseUser.displayName || email.split('@')[0],
-          photoURL: firebaseUser.photoURL || null,
-          authProviders: [currentProvider],
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        };
-
-        await setDoc(userRef, userData);
-        console.log('✅ New user created:', mtaiId);
-      }
-    } catch (error: any) {
-      // Don't fail auth if Firestore fails (permissions, network, etc.)
-      console.warn('⚠️ Firestore update failed:', error.message);
-    }
-  }, []);
+  // ============================================
+  // AUTH METHODS
+  // ============================================
 
   /**
    * Email/Password Login
    */
   const login = useCallback(async (email: string, password: string) => {
     try {
-      console.log('🔐 Attempting login...');
+      console.log('🔐 [Auth] Logging in:', email);
       const result = await signInWithEmailAndPassword(auth, email, password);
-      await saveUserToFirestore(result.user);
-      console.log('✅ Login successful');
+      
+      // Save to Firestore and get MTAI ID
+      const mtaiId = await saveUserToFirestore(result.user, 'password');
+      
+      // Immediately set user state (don't wait for onAuthStateChanged)
+      const userObj = await buildUserObject(result.user);
+      if (userObj) {
+        setUser(userObj);
+        console.log('✅ [Auth] Login successful, user set:', userObj.mtaiId);
+      }
     } catch (error: any) {
-      console.error('❌ Login error:', error.code);
+      console.error('❌ [Auth] Login error:', error.code);
       throw new Error(getAuthErrorMessage(error));
     }
-  }, [saveUserToFirestore]);
+  }, [saveUserToFirestore, buildUserObject]);
 
   /**
-   * Email/Password Signup with verification email
+   * Email/Password Signup
    */
   const signup = useCallback(async (email: string, password: string) => {
     try {
-      console.log('📝 Creating account...');
+      console.log('📝 [Auth] Creating account:', email);
       
-      // Create the user account
+      // Create Firebase Auth account
       const result = await createUserWithEmailAndPassword(auth, email, password);
-      console.log('✅ Account created');
+      console.log('✅ [Auth] Firebase account created');
 
       // Send verification email
       try {
         await sendEmailVerification(result.user);
-        console.log('📧 Verification email sent');
+        console.log('📧 [Auth] Verification email sent');
       } catch (emailError: any) {
-        console.warn('⚠️ Could not send verification email:', emailError.message);
-        // Don't fail signup if email fails - user can resend later
+        console.warn('⚠️ [Auth] Could not send verification email:', emailError.message);
       }
 
-      // Save to Firestore
-      await saveUserToFirestore(result.user);
+      // Create Firestore user document
+      const mtaiId = await saveUserToFirestore(result.user, 'password');
       
+      // Immediately set user state
+      const userObj = await buildUserObject(result.user);
+      if (userObj) {
+        setUser(userObj);
+        console.log('✅ [Auth] Signup complete, user set:', userObj.mtaiId);
+      }
     } catch (error: any) {
-      console.error('❌ Signup error:', error.code);
+      console.error('❌ [Auth] Signup error:', error.code);
       throw new Error(getAuthErrorMessage(error));
     }
-  }, [saveUserToFirestore]);
+  }, [saveUserToFirestore, buildUserObject]);
 
   /**
    * Google OAuth Login
    */
   const googleLogin = useCallback(async () => {
     try {
-      console.log('🔵 Starting Google sign-in...');
+      console.log('🔵 [Auth] Starting Google sign-in...');
       const result = await signInWithPopup(auth, googleProvider);
-      await saveUserToFirestore(result.user);
-      console.log('✅ Google sign-in successful');
+      
+      // Create/update Firestore user document
+      const mtaiId = await saveUserToFirestore(result.user, 'google');
+      
+      // Immediately set user state
+      const userObj = await buildUserObject(result.user);
+      if (userObj) {
+        setUser(userObj);
+        console.log('✅ [Auth] Google sign-in successful, user set:', userObj.mtaiId);
+      }
     } catch (error: any) {
-      console.error('❌ Google sign-in error:', error.code);
+      console.error('❌ [Auth] Google sign-in error:', error.code);
       throw new Error(getAuthErrorMessage(error));
     }
-  }, [saveUserToFirestore]);
+  }, [saveUserToFirestore, buildUserObject]);
 
   /**
-   * Send verification email to current user
+   * Sign out
+   */
+  const logout = useCallback(async () => {
+    try {
+      await firebaseSignOut(auth);
+      console.log('👋 [Auth] Signed out');
+    } catch (error: any) {
+      console.error('❌ [Auth] Sign out error:', error.code);
+      throw new Error('Failed to sign out. Please try again.');
+    }
+  }, []);
+
+  /**
+   * Send verification email
    */
   const sendVerificationEmail = useCallback(async () => {
     if (!auth.currentUser) {
@@ -337,9 +397,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       await sendEmailVerification(auth.currentUser);
-      console.log('📧 Verification email sent');
+      console.log('📧 [Auth] Verification email sent');
     } catch (error: any) {
-      console.error('❌ Verification email error:', error.code);
+      console.error('❌ [Auth] Verification email error:', error.code);
       throw new Error(getAuthErrorMessage(error));
     }
   }, []);
@@ -349,71 +409,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const sendPasswordReset = useCallback(async (email: string) => {
     try {
-      console.log('🔑 Sending password reset email...');
+      console.log('🔑 [Auth] Sending password reset email:', email);
       await sendPasswordResetEmail(auth, email);
-      console.log('📧 Password reset email sent');
+      console.log('📧 [Auth] Password reset email sent');
     } catch (error: any) {
-      console.error('❌ Password reset error:', error.code);
+      console.error('❌ [Auth] Password reset error:', error.code);
       throw new Error(getAuthErrorMessage(error));
     }
   }, []);
 
   /**
-   * Sign out
-   */
-  const logout = useCallback(async () => {
-    try {
-      await firebaseSignOut(auth);
-      console.log('👋 Signed out');
-    } catch (error: any) {
-      console.error('❌ Sign out error:', error.code);
-      throw new Error('Failed to sign out. Please try again.');
-    }
-  }, []);
-
-  /**
-   * Refresh current user data (for checking email verification status)
+   * Refresh user data
    */
   const refreshUser = useCallback(async () => {
     if (auth.currentUser) {
       await auth.currentUser.reload();
-      const mappedUser = await mapFirebaseUser(auth.currentUser);
-      setUser(mappedUser);
-      console.log('🔄 User data refreshed');
+      const userObj = await buildUserObject(auth.currentUser);
+      setUser(userObj);
+      console.log('🔄 [Auth] User refreshed');
     }
-  }, [mapFirebaseUser]);
+  }, [buildUserObject]);
 
-  /**
-   * Listen for auth state changes
-   * 
-   * CRITICAL: On page reload, Firebase Auth restores the session from localStorage.
-   * This happens asynchronously, so `loading` stays true until onAuthStateChanged fires.
-   * All Firestore queries MUST wait for `loading === false` before executing.
-   */
+  // ============================================
+  // AUTH STATE LISTENER
+  // ============================================
+
   useEffect(() => {
-    console.log('🔍 Setting up auth listener...');
+    console.log('🔍 [Auth] Setting up auth listener...');
     
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        console.log('👤 Auth state changed: User signed in:', firebaseUser.email);
-        const mappedUser = await mapFirebaseUser(firebaseUser);
-        setUser(mappedUser);
-        console.log('👤 User MTAI ID:', mappedUser.mtaiId);
+        console.log('👤 [Auth] User signed in:', firebaseUser.email);
+        
+        // Build user object from Firestore
+        const userObj = await buildUserObject(firebaseUser);
+        
+        if (userObj) {
+          setUser(userObj);
+          console.log('✅ [Auth] User loaded:', userObj.mtaiId);
+        } else {
+          // User exists in Firebase but not Firestore - this shouldn't happen
+          // but handle it gracefully by setting null
+          console.warn('⚠️ [Auth] User not in Firestore');
+          setUser(null);
+        }
       } else {
-        console.log('👤 Auth state changed: No user signed in');
+        console.log('👤 [Auth] No user signed in');
         setUser(null);
       }
-      // CRITICAL: Set loading to false AFTER user state is set
-      // This ensures queries don't run until we know the auth state
-      console.log('✅ Auth loading complete');
+      
       setLoading(false);
+      console.log('✅ [Auth] Auth loading complete');
     });
 
     return () => {
-      console.log('🧹 Cleaning up auth listener');
+      console.log('🧹 [Auth] Cleaning up auth listener');
       unsubscribe();
     };
-  }, [mapFirebaseUser]);
+  }, [buildUserObject]);
+
+  // ============================================
+  // CONTEXT VALUE
+  // ============================================
 
   const value: AuthContextType = {
     user,

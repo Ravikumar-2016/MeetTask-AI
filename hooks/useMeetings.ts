@@ -242,7 +242,7 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
 /**
  * Get human-readable status label
  */
-export const getStatusLabel = (status: MeetingStatus): string => {
+export const getStatusLabel = (status: MeetingStatus | string): string => {
   switch (status) {
     case 'completed':
       return 'COMPLETED';
@@ -259,7 +259,7 @@ export const getStatusLabel = (status: MeetingStatus): string => {
     case 'error':
       return 'ERROR';
     default:
-      return status?.toUpperCase() || 'UNKNOWN';
+      return (status as string)?.toUpperCase() || 'UNKNOWN';
   }
 };
 
