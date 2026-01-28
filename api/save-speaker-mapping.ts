@@ -25,9 +25,18 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ============================================
-// GEMINI CONFIG (using official SDK)
+// GEMINI CONFIG (Official SDK - v1 API)
 // ============================================
-const GEMINI_MODEL = 'gemini-1.5-flash'; // Works on free tier, fast, reliable
+const GEMINI_MODEL = 'gemini-1.5-flash';
+
+function getGeminiModel() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY not configured');
+  }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  return genAI.getGenerativeModel({ model: GEMINI_MODEL });
+}
 
 // ============================================
 // FIREBASE ADMIN SETUP

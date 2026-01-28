@@ -1,15 +1,15 @@
 /**
  * AI Pipeline Service
  * 
- * This service handles all AI operations:
- * - Transcription (audio/video via Gemini)
- * - Vision/OCR (images via Gemini Vision)
- * - Summarization (OpenAI)
- * - Task Extraction (OpenAI)
+ * ⚠️ DEPRECATED: This file uses old Gemini v1beta REST API
  * 
- * IMPORTANT: This service runs ONLY on the backend.
- * Never import this in frontend code.
+ * Current workflow uses:
+ * - AssemblyAI for transcription (orchestrator.ts → webhook/assemblyai.ts)
+ * - Gemini SDK for task extraction (save-speaker-mapping.ts)
  * 
+ * This file is kept for reference but should NOT be used.
+ * 
+ * @deprecated Use AssemblyAI for transcription and Gemini SDK for AI tasks
  * @module api/_lib/aiPipeline
  */
 
