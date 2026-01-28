@@ -50,7 +50,7 @@ export interface User {
 // ============================================
 
 export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'analyzing' | 'completed' | 'error';
-export type FileType = 'image' | 'video' | 'audio';
+export type FileType = 'image' | 'video' | 'audio' | 'pdf';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
 
