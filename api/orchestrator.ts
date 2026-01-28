@@ -202,16 +202,31 @@ function getCloudinaryFrameUrl(videoUrl: string, timestampSeconds: number): stri
 // TESSERACT.JS OCR (FREE - NO API KEY NEEDED)
 // ============================================
 
+// Timeout wrapper for OCR (Vercel has 60s limit, we use 15s for single frame)
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => {
+      console.log(`⏱️ [Timeout] Operation timed out after ${ms}ms`);
+      resolve(fallback);
+    }, ms)),
+  ]);
+}
+
 async function detectTextInImage(imageUrl: string): Promise<string[]> {
-  console.log('🔍 [Tesseract] Analyzing frame:', imageUrl.substring(0, 100) + '...');
+  console.log('🔍 [Tesseract] Analyzing frame:', imageUrl.substring(0, 80) + '...');
   
   try {
-    // Fetch image first
+    // Fetch image first with timeout
     console.log('📥 [Tesseract] Fetching image...');
-    const imageResponse = await fetch(imageUrl);
+    const imageResponse = await withTimeout(
+      fetch(imageUrl),
+      10000,
+      null as any
+    );
     
-    if (!imageResponse.ok) {
-      console.log('❌ [Tesseract] Failed to fetch image:', imageResponse.status);
+    if (!imageResponse || !imageResponse.ok) {
+      console.log('❌ [Tesseract] Failed to fetch image');
       return [];
     }
     
@@ -219,26 +234,25 @@ async function detectTextInImage(imageUrl: string): Promise<string[]> {
     const buffer = Buffer.from(arrayBuffer);
     console.log('✅ [Tesseract] Image fetched, size:', Math.round(buffer.length / 1024), 'KB');
     
-    // Run Tesseract OCR
-    console.log('🔄 [Tesseract] Running OCR...');
-    const result = await Tesseract.recognize(buffer, 'eng', {
-      logger: (m) => {
-        if (m.status === 'recognizing text') {
-          // Only log progress at 50% and 100%
-          if (m.progress === 0.5 || m.progress === 1) {
-            console.log(`   OCR progress: ${Math.round(m.progress * 100)}%`);
-          }
-        }
-      },
-    });
+    // Run Tesseract OCR with timeout (15 seconds max per frame)
+    console.log('🔄 [Tesseract] Running OCR (15s timeout)...');
     
-    const fullText = result.data.text || '';
+    const result = await withTimeout(
+      Tesseract.recognize(buffer, 'eng', {
+        logger: (m) => {
+          if (m.status === 'recognizing text' && m.progress === 1) {
+            console.log('   OCR complete');
+          }
+        },
+      }),
+      15000,
+      { data: { text: '' } } as any
+    );
+    
+    const fullText = result?.data?.text || '';
     
     if (fullText.trim()) {
-      console.log('📝 [Tesseract] Full text detected:', fullText.substring(0, 500));
-      
-      // Return array with full text first (same format as Google Vision)
-      // Then individual words/lines for additional matching
+      console.log('📝 [Tesseract] Text detected:', fullText.substring(0, 300));
       const lines = fullText.split('\n').filter((l: string) => l.trim());
       return [fullText, ...lines];
     } else {
@@ -372,86 +386,64 @@ function extractSpeakerNamesFromOCR(detectedTexts: string[]): string[] {
 
 async function analyzeVideoForSpeakers(videoUrl: string, durationSeconds: number): Promise<VideoAnalysisResult> {
   console.log('🎬 [VideoAnalysis] ===== STARTING VIDEO ANALYSIS =====');
-  console.log('🎬 [VideoAnalysis] Video URL:', videoUrl);
+  console.log('🎬 [VideoAnalysis] Video URL:', videoUrl.substring(0, 80));
   console.log('🎬 [VideoAnalysis] Duration:', durationSeconds, 'seconds');
   console.log('✅ [VideoAnalysis] Using Tesseract.js (FREE OCR - no API key needed)');
   
   // Test Cloudinary URL parsing
   const testFrameUrl = getCloudinaryFrameUrl(videoUrl, 5);
-  console.log('🔗 [VideoAnalysis] Test frame URL:', testFrameUrl);
   
   if (!testFrameUrl) {
     console.log('❌ [VideoAnalysis] Failed to generate Cloudinary frame URL');
     return { speakers: [], totalFramesAnalyzed: 0, videoDuration: durationSeconds };
   }
   
-  // Use the actual duration, but cap at 5 minutes for analysis
-  const maxDuration = Math.min(durationSeconds, 300);
+  // LIMIT: Only analyze 3 frames to stay within Vercel timeout
+  // Pick frames at: 5s, middle, and 3/4 through
+  const maxDuration = Math.min(durationSeconds, 180);
+  const frameTimestamps = [
+    5,
+    Math.floor(maxDuration / 2),
+    Math.floor(maxDuration * 0.75),
+  ].filter(t => t < maxDuration);
   
-  const frameTimestamps: number[] = [];
-  // Extract frames every 10 seconds (more frequent for better detection)
-  for (let t = 5; t < maxDuration; t += 10) {
-    frameTimestamps.push(t);
-  }
-  
-  // Ensure at least 5 frames even for short videos
-  if (frameTimestamps.length < 5 && maxDuration > 10) {
-    for (let t = 2; t < maxDuration; t += 5) {
-      if (!frameTimestamps.includes(t)) {
-        frameTimestamps.push(t);
-      }
-    }
-    frameTimestamps.sort((a, b) => a - b);
-  }
-  
-  console.log('📸 [VideoAnalysis] Will analyze', frameTimestamps.length, 'frames at timestamps:', frameTimestamps.slice(0, 10).join(', '), '...');
+  console.log('📸 [VideoAnalysis] Analyzing', frameTimestamps.length, 'frames at:', frameTimestamps.join('s, ') + 's');
   
   const speakerMap = new Map<string, DetectedSpeaker>();
   let framesAnalyzed = 0;
   let framesWithText = 0;
   
-  // Process in batches of 2 to avoid rate limits
-  for (let i = 0; i < frameTimestamps.length; i += 2) {
-    const batch = frameTimestamps.slice(i, i + 2);
-    console.log(`\n📷 [VideoAnalysis] Processing batch ${Math.floor(i/2) + 1}/${Math.ceil(frameTimestamps.length/2)}, timestamps: ${batch.join(', ')}`);
+  // Process frames sequentially (not parallel) to avoid memory issues
+  for (const timestamp of frameTimestamps) {
+    console.log(`\n📷 [VideoAnalysis] Frame ${framesAnalyzed + 1}/${frameTimestamps.length} at ${timestamp}s`);
     
-    const results = await Promise.all(batch.map(async (timestamp) => {
-      const frameUrl = getCloudinaryFrameUrl(videoUrl, timestamp);
-      if (!frameUrl) {
-        console.log('⚠️ [VideoAnalysis] Could not generate frame URL for t=' + timestamp);
-        return { timestamp, names: [], rawTexts: [] };
-      }
-      
-      const texts = await detectTextInImage(frameUrl);
-      const names = extractSpeakerNamesFromOCR(texts);
-      return { timestamp, names, rawTexts: texts };
-    }));
-    
-    for (const { timestamp, names, rawTexts } of results) {
-      framesAnalyzed++;
-      if (rawTexts.length > 0) framesWithText++;
-      
-      for (const name of names) {
-        const existing = speakerMap.get(name);
-        if (existing) {
-          existing.occurrences++;
-          existing.lastSeenAt = timestamp;
-          existing.confidence = Math.min(0.95, existing.confidence + 0.1);
-        } else {
-          speakerMap.set(name, {
-            name,
-            confidence: 0.7,
-            firstSeenAt: timestamp,
-            lastSeenAt: timestamp,
-            occurrences: 1,
-          });
-        }
-      }
+    const frameUrl = getCloudinaryFrameUrl(videoUrl, timestamp);
+    if (!frameUrl) {
+      console.log('⚠️ [VideoAnalysis] Could not generate frame URL');
+      continue;
     }
     
-    // Delay between batches to avoid rate limits
-    if (i + 2 < frameTimestamps.length) {
-      await new Promise(r => setTimeout(r, 500));
+    const texts = await detectTextInImage(frameUrl);
+    const names = extractSpeakerNamesFromOCR(texts);
+    
+    framesAnalyzed++;
+    if (texts.length > 0) framesWithText++;
+    
+    for (const name of names) {
+      const existing = speakerMap.get(name);
+      if (existing) {
+        existing.occurrences++;
+        existing.lastSeenAt = timestamp;
+        existing.confidence = Math.min(0.95, existing.confidence + 0.1);
+      } else {
+        speakerMap.set(name, {
+          name,
+          confidence: 0.7,
+          firstSeenAt: timestamp,
+          lastSeenAt: timestamp,
+          occurrences: 1,
+        });
+      }
     }
   }
   
@@ -888,13 +880,19 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     console.log('   - Duration:', duration, 'seconds');
     console.log('   - Audio speakers:', [...new Set(utterances.map(u => u.speaker))]);
     
-    // Step 2: Run video analysis with actual duration (if video type)
+    // Step 2: Run video analysis with timeout (if video type)
+    // Video OCR is optional - don't let it block the pipeline
     let videoResult: VideoAnalysisResult = { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 };
     
     if (fileType === 'video' && duration > 0) {
-      console.log('🔄 [Pipeline] Step 2: Video analysis for speaker names...');
+      console.log('🔄 [Pipeline] Step 2: Video analysis for speaker names (45s timeout)...');
       try {
-        videoResult = await analyzeVideoForSpeakers(fileUrl, duration);
+        // Wrap entire video analysis in 45 second timeout
+        videoResult = await withTimeout(
+          analyzeVideoForSpeakers(fileUrl, duration),
+          45000,
+          { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 }
+        );
       } catch (err: any) {
         console.log('⚠️ [Pipeline] Video analysis failed:', err.message);
       }
