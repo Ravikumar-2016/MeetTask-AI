@@ -47,12 +47,18 @@ export default async function handler(
   // Check environment variables (don't expose actual values!)
   const envStatus = {
     ASSEMBLYAI_API_KEY: !!process.env.ASSEMBLYAI_API_KEY,
+    GOOGLE_CLOUD_VISION_API_KEY: !!process.env.GOOGLE_CLOUD_VISION_API_KEY,
     FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
   };
 
-  const allConfigured = Object.values(envStatus).every(v => v === true);
+  // Required keys for core functionality
+  const requiredKeys = ['ASSEMBLYAI_API_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+  const coreConfigured = requiredKeys.every(k => envStatus[k as keyof typeof envStatus] === true);
+  
+  // Optional: Video OCR requires Google Vision
+  const videoOcrEnabled = !!process.env.GOOGLE_CLOUD_VISION_API_KEY;
 
   // Check Firebase Admin
   let firebaseStatus = 'unknown';
@@ -65,15 +71,24 @@ export default async function handler(
   }
 
   return response.status(200).json({
-    status: allConfigured ? 'healthy' : 'missing_config',
+    status: coreConfigured ? 'healthy' : 'missing_config',
     timestamp: new Date().toISOString(),
     environment: {
       ...envStatus,
-      allConfigured,
+      coreConfigured,
+      videoOcrEnabled,
+    },
+    features: {
+      audioTranscription: !!process.env.ASSEMBLYAI_API_KEY,
+      speakerDiarization: !!process.env.ASSEMBLYAI_API_KEY,
+      videoOcr: videoOcrEnabled,
+      taskExtraction: !!process.env.ASSEMBLYAI_API_KEY,
     },
     firebase: firebaseStatus,
-    message: allConfigured 
-      ? 'All environment variables are configured' 
+    message: coreConfigured 
+      ? videoOcrEnabled 
+        ? 'All features enabled including video OCR'
+        : 'Core features enabled. Add GOOGLE_CLOUD_VISION_API_KEY for video speaker name detection'
       : 'Some environment variables are missing. Check Vercel Dashboard > Settings > Environment Variables',
   });
 }

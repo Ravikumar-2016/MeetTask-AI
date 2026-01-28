@@ -30,6 +30,8 @@ export interface Meeting {
   speakers?: string[];
   summary?: string;
   duration?: number;
+  // Multi-modal analysis
+  videoAnalysisUsed?: boolean;
 }
 
 // Speaker diarization types
@@ -49,6 +51,7 @@ export interface Transcript {
   meetingId: string;
   userId: string;
   text: string;
+  formattedTranscript?: string;  // Transcript with real speaker names
   wordCount: number;
   summary?: string;
   confidence?: number;
@@ -57,6 +60,9 @@ export interface Transcript {
   utterances?: SpeakerUtterance[];
   speakerMapping?: SpeakerMapping;
   speakerCount?: number;
+  speakers?: string[];
+  // Multi-modal analysis
+  videoAnalysisUsed?: boolean;
   createdAt?: string;
 }
 

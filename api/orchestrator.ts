@@ -1,15 +1,19 @@
 /**
- * Orchestrator API - Meeting Processing with AssemblyAI
+ * Orchestrator API - Multi-Modal Meeting Processing
  * 
  * POST /api/orchestrator
  * 
- * Flow:
+ * Enhanced Flow (Video + Audio):
  * 1. Verify auth & meeting ownership
  * 2. Update status → "processing"
- * 3. Transcribe with AssemblyAI (audio/video) or GPT-4 Vision (images)
- * 4. Extract summary & tasks with GPT-4o-mini
- * 5. Save transcript & tasks to Firestore
- * 6. Update status → "completed" (or "error")
+ * 3. PARALLEL:
+ *    a) Video Analysis: Extract frames → OCR speaker names from tiles
+ *    b) Audio Analysis: AssemblyAI transcription + diarization
+ * 4. Speaker Mapping: Match Speaker A/B/C to real names from video
+ * 5. Enhanced Transcript: Replace IDs with real names
+ * 6. Task Extraction: LeMUR with speaker context → auto-assign to people
+ * 7. Save to Firestore
+ * 8. Update status → "completed"
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -109,7 +113,7 @@ type FileType = 'audio' | 'video' | 'image';
 // ============================================
 
 interface SpeakerUtterance {
-  speaker: string;       // "A", "B", "C", etc.
+  speaker: string;       // "A", "B", "C", etc. or real name after mapping
   text: string;
   start: number;         // milliseconds
   end: number;
@@ -117,7 +121,7 @@ interface SpeakerUtterance {
 }
 
 interface SpeakerMapping {
-  [speakerId: string]: string;  // "A" -> "John" or "Speaker A"
+  [speakerId: string]: string;  // "A" -> "Eric Johnson" or "Speaker A"
 }
 
 interface TranscriptionResult {
@@ -127,6 +131,309 @@ interface TranscriptionResult {
   transcriptId: string;
   utterances: SpeakerUtterance[];
   speakerMapping: SpeakerMapping;
+}
+
+// ============================================
+// VIDEO ANALYSIS TYPES
+// ============================================
+
+interface DetectedSpeaker {
+  name: string;
+  confidence: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  occurrences: number;
+}
+
+interface VideoAnalysisResult {
+  speakers: DetectedSpeaker[];
+  totalFramesAnalyzed: number;
+  videoDuration: number;
+}
+
+// ============================================
+// VIDEO FRAME EXTRACTION (Cloudinary)
+// ============================================
+
+function getCloudinaryFrameUrl(videoUrl: string, timestampSeconds: number): string {
+  const cloudinaryRegex = /https:\/\/res\.cloudinary\.com\/([^\/]+)\/([^\/]+)\/upload\/(?:v\d+\/)?(.+)$/;
+  const match = videoUrl.match(cloudinaryRegex);
+  
+  if (!match) {
+    console.warn('[Video] Not a Cloudinary URL, cannot extract frames');
+    return '';
+  }
+  
+  const [, cloudName, resourceType, publicIdWithExt] = match;
+  const publicId = publicIdWithExt.replace(/\.[^.]+$/, '');
+  
+  // Cloudinary transformation: extract frame at timestamp as JPEG
+  return `https://res.cloudinary.com/${cloudName}/video/upload/so_${timestampSeconds},f_jpg,w_1280,q_auto/${publicId}.jpg`;
+}
+
+// ============================================
+// GOOGLE CLOUD VISION OCR
+// ============================================
+
+async function detectTextInImage(imageUrl: string): Promise<string[]> {
+  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+  if (!apiKey) return [];
+  
+  try {
+    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{
+          image: { source: { imageUri: imageUrl } },
+          features: [{ type: 'TEXT_DETECTION', maxResults: 50 }],
+        }],
+      }),
+    });
+    
+    if (!response.ok) return [];
+    
+    const data = await response.json();
+    const annotations = data.responses?.[0]?.textAnnotations || [];
+    return annotations.map((a: any) => a.description);
+  } catch {
+    return [];
+  }
+}
+
+// ============================================
+// SPEAKER NAME EXTRACTION FROM OCR
+// ============================================
+
+function extractSpeakerNamesFromOCR(detectedTexts: string[]): string[] {
+  const names: string[] = [];
+  
+  // Filter words (UI elements)
+  const filterWords = new Set([
+    'zoom', 'meet', 'teams', 'webex', 'mute', 'unmute', 'video', 'audio',
+    'share', 'screen', 'chat', 'record', 'recording', 'participants', 'host',
+    'leave', 'end', 'meeting', 'you', 'me', 'pin', 'spotlight', 'gallery',
+    'view', 'speaker', 'grid', 'reactions', 'raise', 'hand', 'more',
+    'security', 'breakout', 'rooms', 'polls', 'apps', 'live', 'transcript',
+    'captions', 'settings', 'minimize', 'maximize',
+  ]);
+  
+  for (const text of detectedTexts) {
+    if (text.length < 3 || text.length > 50) continue;
+    
+    const lowerText = text.toLowerCase();
+    if ([...filterWords].some(w => lowerText.includes(w))) continue;
+    if (/^\d+$/.test(text) || /^[^a-zA-Z]+$/.test(text)) continue;
+    
+    // Check for "FirstName LastName" pattern (2-3 capitalized words)
+    const words = text.trim().split(/\s+/);
+    if (words.length >= 2 && words.length <= 4) {
+      // Allow format like "Eric Johnson - VP" → take "Eric Johnson"
+      const namePart = text.split(/\s*[-–—]\s*/)[0].trim();
+      const nameWords = namePart.split(/\s+/);
+      
+      if (nameWords.length >= 2 && nameWords.length <= 3) {
+        const allCapitalized = nameWords.every(w => /^[A-Z][a-z]+$/.test(w));
+        if (allCapitalized && !names.includes(namePart)) {
+          names.push(namePart);
+        }
+      }
+    }
+  }
+  
+  return names;
+}
+
+// ============================================
+// VIDEO ANALYSIS - Extract Speaker Names from Tiles
+// ============================================
+
+async function analyzeVideoForSpeakers(videoUrl: string, durationSeconds: number): Promise<VideoAnalysisResult> {
+  console.log('🎬 [VideoAnalysis] Starting video analysis for speaker names...');
+  
+  if (!process.env.GOOGLE_CLOUD_VISION_API_KEY) {
+    console.log('⚠️ [VideoAnalysis] GOOGLE_CLOUD_VISION_API_KEY not set, skipping');
+    return { speakers: [], totalFramesAnalyzed: 0, videoDuration: durationSeconds };
+  }
+  
+  const frameTimestamps: number[] = [];
+  // Extract frames every 15 seconds, starting at 5 seconds
+  for (let t = 5; t < durationSeconds && t < 300; t += 15) { // Max 5 min analysis
+    frameTimestamps.push(t);
+  }
+  
+  console.log('📸 [VideoAnalysis] Analyzing', frameTimestamps.length, 'frames');
+  
+  const speakerMap = new Map<string, DetectedSpeaker>();
+  let framesAnalyzed = 0;
+  
+  // Process in batches of 3 to avoid rate limits
+  for (let i = 0; i < frameTimestamps.length; i += 3) {
+    const batch = frameTimestamps.slice(i, i + 3);
+    
+    const results = await Promise.all(batch.map(async (timestamp) => {
+      const frameUrl = getCloudinaryFrameUrl(videoUrl, timestamp);
+      if (!frameUrl) return { timestamp, names: [] };
+      
+      const texts = await detectTextInImage(frameUrl);
+      const names = extractSpeakerNamesFromOCR(texts);
+      return { timestamp, names };
+    }));
+    
+    for (const { timestamp, names } of results) {
+      framesAnalyzed++;
+      for (const name of names) {
+        const existing = speakerMap.get(name);
+        if (existing) {
+          existing.occurrences++;
+          existing.lastSeenAt = timestamp;
+          existing.confidence = Math.min(0.95, existing.confidence + 0.05);
+        } else {
+          speakerMap.set(name, {
+            name,
+            confidence: 0.6,
+            firstSeenAt: timestamp,
+            lastSeenAt: timestamp,
+            occurrences: 1,
+          });
+        }
+      }
+    }
+    
+    // Small delay between batches
+    if (i + 3 < frameTimestamps.length) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  
+  // Filter: must appear in at least 2 frames
+  const speakers = [...speakerMap.values()]
+    .filter(s => s.occurrences >= 2)
+    .sort((a, b) => b.occurrences - a.occurrences);
+  
+  console.log('✅ [VideoAnalysis] Detected speakers from video:', speakers.map(s => s.name));
+  
+  return {
+    speakers,
+    totalFramesAnalyzed: framesAnalyzed,
+    videoDuration: durationSeconds,
+  };
+}
+
+// ============================================
+// SPEAKER MAPPING - Align Audio IDs with Video Names
+// ============================================
+
+function mapAudioSpeakersToVideoNames(
+  utterances: SpeakerUtterance[],
+  videoSpeakers: DetectedSpeaker[]
+): SpeakerMapping {
+  const mapping: SpeakerMapping = {};
+  const usedNames = new Set<string>();
+  
+  // Get unique speaker IDs from audio
+  const speakerIds = [...new Set(utterances.map(u => u.speaker))];
+  const knownNames = videoSpeakers.map(s => s.name);
+  
+  console.log('🔗 [SpeakerMapping] Mapping', speakerIds.length, 'audio speakers to', knownNames.length, 'video names');
+  
+  // Strategy 1: Detect self-introductions in transcript
+  const introPatterns = [
+    /(?:hi|hello|hey)[,.]?\s+(?:i'm|i am|this is)\s+([A-Z][a-z]+)/i,
+    /(?:i'm|i am|my name is)\s+([A-Z][a-z]+)/i,
+    /([A-Z][a-z]+)\s+(?:here|speaking)/i,
+  ];
+  
+  // Check first 5 utterances of each speaker for self-intro
+  const speakerFirstUtterances = new Map<string, SpeakerUtterance[]>();
+  for (const u of utterances) {
+    const existing = speakerFirstUtterances.get(u.speaker) || [];
+    if (existing.length < 5) {
+      speakerFirstUtterances.set(u.speaker, [...existing, u]);
+    }
+  }
+  
+  for (const [speakerId, speakerUtterances] of speakerFirstUtterances) {
+    for (const u of speakerUtterances) {
+      for (const pattern of introPatterns) {
+        const match = u.text.match(pattern);
+        if (match && match[1]) {
+          const firstName = match[1];
+          const fullName = knownNames.find(n => 
+            n.toLowerCase().startsWith(firstName.toLowerCase())
+          );
+          if (fullName && !usedNames.has(fullName)) {
+            mapping[speakerId] = fullName;
+            usedNames.add(fullName);
+            console.log(`  ✓ Self-intro: ${speakerId} → ${fullName}`);
+            break;
+          }
+        }
+      }
+      if (mapping[speakerId]) break;
+    }
+  }
+  
+  // Strategy 2: Match by speaking prominence (most active audio = most visible video)
+  const speakerDurations = new Map<string, number>();
+  for (const u of utterances) {
+    const current = speakerDurations.get(u.speaker) || 0;
+    speakerDurations.set(u.speaker, current + (u.end - u.start));
+  }
+  
+  const sortedBySpeakingTime = [...speakerDurations.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id)
+    .filter(id => !mapping[id]);
+  
+  const sortedVideoSpeakers = [...videoSpeakers]
+    .sort((a, b) => b.occurrences - a.occurrences);
+  
+  for (let i = 0; i < sortedBySpeakingTime.length; i++) {
+    const speakerId = sortedBySpeakingTime[i];
+    const videoSpeaker = sortedVideoSpeakers.find(v => !usedNames.has(v.name));
+    
+    if (videoSpeaker) {
+      mapping[speakerId] = videoSpeaker.name;
+      usedNames.add(videoSpeaker.name);
+      console.log(`  ✓ Prominence match: ${speakerId} → ${videoSpeaker.name}`);
+    }
+  }
+  
+  // Strategy 3: Fallback to "Speaker X"
+  for (const speakerId of speakerIds) {
+    if (!mapping[speakerId]) {
+      mapping[speakerId] = `Speaker ${speakerId}`;
+      console.log(`  ⚠️ Fallback: ${speakerId} → Speaker ${speakerId}`);
+    }
+  }
+  
+  return mapping;
+}
+
+// ============================================
+// GENERATE FORMATTED TRANSCRIPT
+// ============================================
+
+function generateFormattedTranscript(utterances: SpeakerUtterance[], mapping: SpeakerMapping): string {
+  let currentSpeaker = '';
+  const lines: string[] = [];
+  
+  for (const u of utterances) {
+    const speakerName = mapping[u.speaker] || u.speaker;
+    
+    if (speakerName !== currentSpeaker) {
+      const minutes = Math.floor(u.start / 60000);
+      const seconds = Math.floor((u.start % 60000) / 1000);
+      lines.push('');
+      lines.push(`${speakerName} [${minutes}:${seconds.toString().padStart(2, '0')}]:`);
+      currentSpeaker = speakerName;
+    }
+    
+    lines.push(u.text);
+  }
+  
+  return lines.join('\n').trim();
 }
 
 // ============================================
@@ -209,10 +516,11 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<Transcription
   }));
 
   console.log('👥 [AssemblyAI] Found', utterances.length, 'utterances');
+  console.log('👥 [AssemblyAI] Unique speakers:', [...new Set(utterances.map(u => u.speaker))]);
 
-  // Step 4: Map speaker IDs to names (if mentioned)
-  const speakerMapping = mapSpeakersToNames(pollData.text || '', utterances);
-  console.log('🏷️ [AssemblyAI] Speaker mapping:', speakerMapping);
+  // NOTE: Speaker mapping will be done later using video OCR
+  // Here we just return empty mapping, actual mapping happens in runPipeline
+  const speakerMapping: SpeakerMapping = {};
 
   return {
     text: pollData.text || '',
@@ -225,47 +533,9 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<Transcription
 }
 
 // ============================================
-// SPEAKER NAME MAPPING
-// Attempts to find real names mentioned in transcript
+// NOTE: mapSpeakersToNames is now replaced by mapAudioSpeakersToVideoNames
+// which uses video OCR for real names
 // ============================================
-
-function mapSpeakersToNames(fullText: string, utterances: SpeakerUtterance[]): SpeakerMapping {
-  const mapping: SpeakerMapping = {};
-  const uniqueSpeakers = [...new Set(utterances.map(u => u.speaker))];
-  
-  // Common patterns for name introductions
-  const namePatterns = [
-    /(?:I'm|I am|my name is|this is|hey,? it's|hi,? I'm)\s+([A-Z][a-z]+)/gi,
-    /([A-Z][a-z]+)\s+(?:here|speaking)/gi,
-  ];
-
-  // Try to find names in the first few utterances of each speaker
-  for (const speakerId of uniqueSpeakers) {
-    const speakerUtterances = utterances.filter(u => u.speaker === speakerId);
-    const firstFewTexts = speakerUtterances.slice(0, 3).map(u => u.text).join(' ');
-    
-    let foundName: string | null = null;
-    
-    for (const pattern of namePatterns) {
-      const match = pattern.exec(firstFewTexts);
-      if (match && match[1]) {
-        // Validate it looks like a name (not a common word)
-        const possibleName = match[1];
-        const commonWords = ['the', 'this', 'that', 'here', 'there', 'just', 'well'];
-        if (!commonWords.includes(possibleName.toLowerCase()) && possibleName.length >= 2) {
-          foundName = possibleName;
-          break;
-        }
-      }
-      pattern.lastIndex = 0; // Reset regex
-    }
-    
-    // Use found name or default to "Speaker X"
-    mapping[speakerId] = foundName || `Speaker ${speakerId}`;
-  }
-  
-  return mapping;
-}
 
 // ============================================
 // ASSEMBLYAI LEMUR - Summary & Task Extraction with Speakers
@@ -411,48 +681,95 @@ function extractSimpleSummaryAndTasks(transcript: string, meetingTitle: string):
 
 interface PipelineResult {
   transcript: string;
+  formattedTranscript: string;
   confidence: number;
   duration: number;
   summary: string;
   tasks: ExtractedTask[];
   utterances: SpeakerUtterance[];
   speakerMapping: SpeakerMapping;
+  speakers: string[];
+  speakerCount: number;
+  videoAnalysisUsed: boolean;
 }
 
 async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: string): Promise<PipelineResult> {
-  console.log('🚀 [Pipeline] Starting for:', meetingTitle);
+  console.log('🚀 [Pipeline] Starting MULTI-MODAL processing for:', meetingTitle);
   console.log('📁 [Pipeline] File type:', fileType);
 
   let transcript = '';
+  let formattedTranscript = '';
   let confidence = 0;
   let duration = 0;
   let summary = '';
   let tasks: ExtractedTask[] = [];
   let utterances: SpeakerUtterance[] = [];
   let speakerMapping: SpeakerMapping = {};
+  let videoAnalysisUsed = false;
 
   // Step 1: Get transcript based on file type
   if (fileType === 'image') {
     const result = await extractTextFromImage(fileUrl);
     transcript = result.text;
+    formattedTranscript = transcript;
     // For images, use simple summary (no LeMUR)
     const extraction = extractSimpleSummaryAndTasks(transcript, meetingTitle);
     summary = extraction.summary;
     tasks = extraction.tasks;
   } else {
-    // Audio or Video - use AssemblyAI with speaker diarization
-    const result = await transcribeWithAssemblyAI(fileUrl);
-    transcript = result.text;
-    confidence = result.confidence;
-    duration = result.duration;
-    utterances = result.utterances;
-    speakerMapping = result.speakerMapping;
+    // ============================================
+    // MULTI-MODAL PROCESSING (Audio + Video)
+    // ============================================
     
-    console.log('👥 [Pipeline] Speakers found:', Object.keys(speakerMapping).length);
+    // Run BOTH audio transcription AND video analysis in PARALLEL
+    console.log('🔄 [Pipeline] Starting parallel audio + video analysis...');
     
-    // Use AssemblyAI LeMUR for summary & tasks WITH speaker info
-    if (result.transcriptId && transcript.length > 10) {
-      const extraction = await extractSummaryWithLemur(result.transcriptId, meetingTitle, speakerMapping);
+    const [audioResult, videoResult] = await Promise.all([
+      // Audio: AssemblyAI transcription with speaker diarization
+      transcribeWithAssemblyAI(fileUrl),
+      
+      // Video: Extract speaker names from video tiles (if video type)
+      fileType === 'video' 
+        ? analyzeVideoForSpeakers(fileUrl, 600) // Analyze up to 10 min
+            .catch(err => {
+              console.log('⚠️ [Pipeline] Video analysis failed, continuing with audio only:', err.message);
+              return { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 } as VideoAnalysisResult;
+            })
+        : Promise.resolve({ speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 } as VideoAnalysisResult)
+    ]);
+    
+    transcript = audioResult.text;
+    confidence = audioResult.confidence;
+    duration = audioResult.duration;
+    utterances = audioResult.utterances;
+    
+    console.log('📊 [Pipeline] Audio analysis complete:');
+    console.log('   - Transcript length:', transcript.length);
+    console.log('   - Audio speakers (A, B, C...):', [...new Set(utterances.map(u => u.speaker))]);
+    
+    // Use video analysis results for speaker mapping if available
+    if (videoResult.speakers.length > 0) {
+      console.log('📊 [Pipeline] Video analysis complete:');
+      console.log('   - Frames analyzed:', videoResult.totalFramesAnalyzed);
+      console.log('   - Names detected:', videoResult.speakers.map(s => s.name));
+      
+      // Map audio speaker IDs (A, B, C) to real names from video
+      speakerMapping = mapAudioSpeakersToVideoNames(utterances, videoResult.speakers);
+      videoAnalysisUsed = true;
+    } else {
+      // Fallback: Try to extract names from transcript
+      console.log('⚠️ [Pipeline] No video names detected, using audio-only mapping');
+      speakerMapping = mapAudioSpeakersToVideoNames(utterances, []);
+    }
+    
+    console.log('🔗 [Pipeline] Final speaker mapping:', speakerMapping);
+    
+    // Generate formatted transcript with real names
+    formattedTranscript = generateFormattedTranscript(utterances, speakerMapping);
+    
+    // Use AssemblyAI LeMUR for summary & tasks WITH real speaker names
+    if (audioResult.transcriptId && transcript.length > 10) {
+      const extraction = await extractSummaryWithLemur(audioResult.transcriptId, meetingTitle, speakerMapping);
       summary = extraction.summary;
       tasks = extraction.tasks;
     } else {
@@ -467,14 +784,22 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     throw new Error('No transcript could be generated');
   }
 
+  // Get list of speaker names
+  const speakers = Object.values(speakerMapping);
+  const speakerCount = speakers.length;
+
   return {
     transcript,
+    formattedTranscript,
     confidence,
     duration,
     summary,
     tasks,
     utterances,
     speakerMapping,
+    speakers,
+    speakerCount,
+    videoAnalysisUsed,
   };
 }
 
@@ -563,11 +888,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     // Run AI pipeline
     const result = await runPipeline(fileUrl, fileType, meeting.title || 'Untitled');
 
-    // Save transcript WITH speaker segments
+    // Save transcript WITH speaker segments and formatted version
     await db.collection('transcripts').doc(meetingId).set({
       meetingId,
       userId: user.uid,
       text: result.transcript,
+      formattedTranscript: result.formattedTranscript,
       summary: result.summary,
       confidence: result.confidence,
       duration: result.duration,
@@ -575,10 +901,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
       // Speaker diarization data
       utterances: result.utterances,
       speakerMapping: result.speakerMapping,
-      speakerCount: Object.keys(result.speakerMapping).length,
+      speakerCount: result.speakerCount,
+      speakers: result.speakers,
+      // Multi-modal analysis info
+      videoAnalysisUsed: result.videoAnalysisUsed,
       createdAt: FieldValue.serverTimestamp(),
     });
     console.log('💾 Transcript saved with', result.utterances.length, 'utterances');
+    console.log('   Video OCR used:', result.videoAnalysisUsed);
 
     // Save tasks WITH speaker assignment details
     if (result.tasks.length > 0) {
@@ -610,13 +940,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
       taskCount: result.tasks.length,
       summary: result.summary.substring(0, 500),
       duration: result.duration,
-      speakerCount: Object.keys(result.speakerMapping).length,
-      speakers: Object.values(result.speakerMapping),
+      speakerCount: result.speakerCount,
+      speakers: result.speakers,
+      videoAnalysisUsed: result.videoAnalysisUsed,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
     console.log('\n========================================');
     console.log('✅ [Orchestrator] Processing complete!');
+    console.log('   - Speakers:', result.speakers.join(', '));
+    console.log('   - Tasks:', result.tasks.length);
+    console.log('   - Video OCR:', result.videoAnalysisUsed ? 'Yes' : 'No');
     console.log('========================================\n');
 
     return response.status(200).json({

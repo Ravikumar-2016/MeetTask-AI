@@ -43,6 +43,7 @@ const MeetingDetailsPage: React.FC = () => {
   // State for meeting data
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [transcript, setTranscript] = useState<string>('');
+  const [formattedTranscript, setFormattedTranscript] = useState<string>('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ const MeetingDetailsPage: React.FC = () => {
   const [utterances, setUtterances] = useState<SpeakerUtterance[]>([]);
   const [speakerMapping, setSpeakerMapping] = useState<SpeakerMapping>({});
   const [showSpeakerView, setShowSpeakerView] = useState(true);
+  const [videoOcrUsed, setVideoOcrUsed] = useState(false);
 
   // Fetch meeting details
   useEffect(() => {
@@ -138,6 +140,11 @@ const MeetingDetailsPage: React.FC = () => {
           const data = transcriptSnap.data();
           setTranscript(data.text || '');
           
+          // Load formatted transcript (with real names)
+          if (data.formattedTranscript) {
+            setFormattedTranscript(data.formattedTranscript);
+          }
+          
           // Load speaker diarization data
           if (data.utterances) {
             setUtterances(data.utterances);
@@ -146,7 +153,13 @@ const MeetingDetailsPage: React.FC = () => {
             setSpeakerMapping(data.speakerMapping);
           }
           
+          // Check if video OCR was used
+          if (data.videoAnalysisUsed) {
+            setVideoOcrUsed(true);
+          }
+          
           console.log('[MeetingDetails] Transcript loaded with', data.utterances?.length || 0, 'utterances');
+          console.log('[MeetingDetails] Video OCR used:', data.videoAnalysisUsed || false);
         }
       } catch (err) {
         console.error('[MeetingDetails] Error fetching transcript:', err);
@@ -360,9 +373,17 @@ const MeetingDetailsPage: React.FC = () => {
                   {/* Toggle for speaker view */}
                   {utterances.length > 0 && (
                     <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
-                      <div className="flex items-center text-sm text-slate-500">
-                        <span className="material-icons text-[16px] mr-2">people</span>
-                        {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center text-sm text-slate-500">
+                          <span className="material-icons text-[16px] mr-2">people</span>
+                          {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
+                        </div>
+                        {videoOcrUsed && (
+                          <span className="px-2 py-1 text-[10px] font-bold bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100">
+                            <span className="material-icons text-[10px] mr-1 align-middle">videocam</span>
+                            Names from video
+                          </span>
+                        )}
                       </div>
                       <button
                         onClick={() => setShowSpeakerView(!showSpeakerView)}
