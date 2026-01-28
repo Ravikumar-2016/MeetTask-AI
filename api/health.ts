@@ -47,7 +47,6 @@ export default async function handler(
   // Check environment variables (don't expose actual values!)
   const envStatus = {
     ASSEMBLYAI_API_KEY: !!process.env.ASSEMBLYAI_API_KEY,
-    GOOGLE_CLOUD_VISION_API_KEY: !!process.env.GOOGLE_CLOUD_VISION_API_KEY,
     FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
@@ -56,9 +55,6 @@ export default async function handler(
   // Required keys for core functionality
   const requiredKeys = ['ASSEMBLYAI_API_KEY', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
   const coreConfigured = requiredKeys.every(k => envStatus[k as keyof typeof envStatus] === true);
-  
-  // Optional: Video OCR requires Google Vision
-  const videoOcrEnabled = !!process.env.GOOGLE_CLOUD_VISION_API_KEY;
 
   // Check Firebase Admin
   let firebaseStatus = 'unknown';
@@ -76,19 +72,17 @@ export default async function handler(
     environment: {
       ...envStatus,
       coreConfigured,
-      videoOcrEnabled,
     },
     features: {
       audioTranscription: !!process.env.ASSEMBLYAI_API_KEY,
       speakerDiarization: !!process.env.ASSEMBLYAI_API_KEY,
-      videoOcr: videoOcrEnabled,
+      videoOcr: '✅ Tesseract.js (FREE - no API key needed)',
       taskExtraction: !!process.env.ASSEMBLYAI_API_KEY,
     },
     firebase: firebaseStatus,
+    ocrEngine: 'Tesseract.js (open-source, unlimited, free)',
     message: coreConfigured 
-      ? videoOcrEnabled 
-        ? 'All features enabled including video OCR'
-        : 'Core features enabled. Add GOOGLE_CLOUD_VISION_API_KEY for video speaker name detection'
+      ? 'All features enabled! Video OCR uses Tesseract.js (free, no API key)'
       : 'Some environment variables are missing. Check Vercel Dashboard > Settings > Environment Variables',
   });
 }

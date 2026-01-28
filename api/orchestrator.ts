@@ -20,6 +20,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import Tesseract from 'tesseract.js';
 
 // ============================================
 // FIREBASE ADMIN SETUP
@@ -198,79 +199,54 @@ function getCloudinaryFrameUrl(videoUrl: string, timestampSeconds: number): stri
 }
 
 // ============================================
-// GOOGLE CLOUD VISION OCR
+// TESSERACT.JS OCR (FREE - NO API KEY NEEDED)
 // ============================================
 
 async function detectTextInImage(imageUrl: string): Promise<string[]> {
-  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!apiKey) {
-    console.log('❌ [Vision] No API key');
-    return [];
-  }
-  
-  console.log('🔍 [Vision] Analyzing frame:', imageUrl.substring(0, 100) + '...');
+  console.log('🔍 [Tesseract] Analyzing frame:', imageUrl.substring(0, 100) + '...');
   
   try {
-    // First, try to fetch the image and convert to base64
-    // This is more reliable than passing URL to Vision API
-    let imageData: { content?: string; source?: { imageUri: string } };
+    // Fetch image first
+    console.log('📥 [Tesseract] Fetching image...');
+    const imageResponse = await fetch(imageUrl);
     
-    try {
-      console.log('📥 [Vision] Fetching image...');
-      const imageResponse = await fetch(imageUrl);
-      
-      if (imageResponse.ok) {
-        const arrayBuffer = await imageResponse.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString('base64');
-        imageData = { content: base64 };
-        console.log('✅ [Vision] Image fetched, size:', Math.round(base64.length / 1024), 'KB');
-      } else {
-        console.log('⚠️ [Vision] Could not fetch image, trying URL method. Status:', imageResponse.status);
-        imageData = { source: { imageUri: imageUrl } };
-      }
-    } catch (fetchErr) {
-      console.log('⚠️ [Vision] Fetch failed, trying URL method:', fetchErr);
-      imageData = { source: { imageUri: imageUrl } };
+    if (!imageResponse.ok) {
+      console.log('❌ [Tesseract] Failed to fetch image:', imageResponse.status);
+      return [];
     }
     
-    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [{
-          image: imageData,
-          features: [{ type: 'TEXT_DETECTION', maxResults: 50 }],
-        }],
-      }),
+    const arrayBuffer = await imageResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    console.log('✅ [Tesseract] Image fetched, size:', Math.round(buffer.length / 1024), 'KB');
+    
+    // Run Tesseract OCR
+    console.log('🔄 [Tesseract] Running OCR...');
+    const result = await Tesseract.recognize(buffer, 'eng', {
+      logger: (m) => {
+        if (m.status === 'recognizing text') {
+          // Only log progress at 50% and 100%
+          if (m.progress === 0.5 || m.progress === 1) {
+            console.log(`   OCR progress: ${Math.round(m.progress * 100)}%`);
+          }
+        }
+      },
     });
     
-    if (!response.ok) {
-      const errText = await response.text();
-      console.log('❌ [Vision] API error:', response.status, errText.substring(0, 300));
-      return [];
-    }
+    const fullText = result.data.text || '';
     
-    const data = await response.json();
-    
-    // Check for errors in response
-    if (data.responses?.[0]?.error) {
-      console.log('❌ [Vision] Response error:', data.responses[0].error.message);
-      return [];
-    }
-    
-    const annotations = data.responses?.[0]?.textAnnotations || [];
-    const texts = annotations.map((a: any) => a.description);
-    
-    // Log the full text detected (first annotation is the complete text)
-    if (texts.length > 0) {
-      console.log('📝 [Vision] Full text detected:', texts[0]?.substring(0, 500));
+    if (fullText.trim()) {
+      console.log('📝 [Tesseract] Full text detected:', fullText.substring(0, 500));
+      
+      // Return array with full text first (same format as Google Vision)
+      // Then individual words/lines for additional matching
+      const lines = fullText.split('\n').filter((l: string) => l.trim());
+      return [fullText, ...lines];
     } else {
-      console.log('📝 [Vision] No text detected in frame');
+      console.log('📝 [Tesseract] No text detected in frame');
+      return [];
     }
-    
-    return texts;
   } catch (err: any) {
-    console.log('❌ [Vision] Exception:', err.message);
+    console.log('❌ [Tesseract] Exception:', err.message);
     return [];
   }
 }
@@ -398,13 +374,7 @@ async function analyzeVideoForSpeakers(videoUrl: string, durationSeconds: number
   console.log('🎬 [VideoAnalysis] ===== STARTING VIDEO ANALYSIS =====');
   console.log('🎬 [VideoAnalysis] Video URL:', videoUrl);
   console.log('🎬 [VideoAnalysis] Duration:', durationSeconds, 'seconds');
-  
-  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!apiKey) {
-    console.log('❌ [VideoAnalysis] GOOGLE_CLOUD_VISION_API_KEY not set!');
-    return { speakers: [], totalFramesAnalyzed: 0, videoDuration: durationSeconds };
-  }
-  console.log('✅ [VideoAnalysis] Google Vision API key is configured');
+  console.log('✅ [VideoAnalysis] Using Tesseract.js (FREE OCR - no API key needed)');
   
   // Test Cloudinary URL parsing
   const testFrameUrl = getCloudinaryFrameUrl(videoUrl, 5);

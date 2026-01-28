@@ -3,11 +3,14 @@
  * 
  * GET /api/test-vision?url=...
  * 
- * Test endpoint to verify Google Cloud Vision OCR is working.
+ * Test endpoint to verify Tesseract.js OCR is working.
  * Pass a Cloudinary video URL to test frame extraction and OCR.
+ * 
+ * 🆓 NO API KEY NEEDED - Uses Tesseract.js (free, local OCR)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import Tesseract from 'tesseract.js';
 
 export default async function handler(
   request: VercelRequest,
@@ -27,13 +30,7 @@ export default async function handler(
     return response.status(400).json({
       error: 'Missing url parameter',
       usage: '/api/test-vision?url=YOUR_CLOUDINARY_VIDEO_URL&t=5',
-    });
-  }
-
-  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!apiKey) {
-    return response.status(500).json({
-      error: 'GOOGLE_CLOUD_VISION_API_KEY not configured',
+      note: '🆓 Using Tesseract.js - NO API KEY NEEDED!',
     });
   }
 
@@ -67,44 +64,30 @@ export default async function handler(
     }
 
     const arrayBuffer = await imageResponse.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-    const imageSizeKB = Math.round(base64.length / 1024);
+    const buffer = Buffer.from(arrayBuffer);
+    const imageSizeKB = Math.round(buffer.length / 1024);
 
     console.log('Image fetched, size:', imageSizeKB, 'KB');
 
-    // Step 3: Send to Vision API
-    const visionResponse = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [{
-          image: { content: base64 },
-          features: [{ type: 'TEXT_DETECTION', maxResults: 50 }],
-        }],
-      }),
-    });
-
-    if (!visionResponse.ok) {
-      const errText = await visionResponse.text();
-      return response.status(500).json({
-        error: 'Vision API error',
-        status: visionResponse.status,
-        details: errText.substring(0, 500),
-      });
-    }
-
-    const visionData = await visionResponse.json();
+    // Step 3: Run Tesseract OCR (FREE - no API key!)
+    console.log('Running Tesseract OCR...');
+    const startTime = Date.now();
     
-    if (visionData.responses?.[0]?.error) {
-      return response.status(500).json({
-        error: 'Vision API response error',
-        details: visionData.responses[0].error,
-      });
-    }
-
-    const annotations = visionData.responses?.[0]?.textAnnotations || [];
-    const fullText = annotations[0]?.description || '';
+    const result = await Tesseract.recognize(buffer, 'eng', {
+      logger: (m) => {
+        if (m.status === 'recognizing text' && m.progress === 1) {
+          console.log('OCR complete');
+        }
+      },
+    });
+    
+    const ocrTime = Date.now() - startTime;
+    const fullText = result.data.text || '';
     const lines = fullText.split(/[\n\r]+/).filter((l: string) => l.trim());
+    const confidence = result.data.confidence;
+
+    console.log('OCR completed in', ocrTime, 'ms');
+    console.log('Text detected:', fullText.substring(0, 200));
 
     // Step 4: Extract names
     const names: string[] = [];
@@ -125,14 +108,16 @@ export default async function handler(
 
     return response.status(200).json({
       success: true,
+      engine: 'Tesseract.js (FREE - no API key)',
       frameUrl,
       imageSizeKB,
       timestamp,
+      ocrTimeMs: ocrTime,
+      confidence: Math.round(confidence),
       textDetected: fullText.length > 0,
       fullText: fullText.substring(0, 1000),
       lines: lines.slice(0, 30),
       extractedNames: names,
-      annotationCount: annotations.length,
     });
 
   } catch (error: any) {
