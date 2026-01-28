@@ -75,7 +75,7 @@ interface Task {
 }
 
 // ============================================
-// LOOKUP USERS BY MTAI ID
+// LOOKUP USERS BY MTAI ID (or temporary ID)
 // ============================================
 async function lookupUsersByMtaiId(
   db: FirebaseFirestore.Firestore,
@@ -83,17 +83,20 @@ async function lookupUsersByMtaiId(
 ): Promise<Map<string, FirestoreUser>> {
   const usersMap = new Map<string, FirestoreUser>();
   
-  // Query all users and filter by mtaiId
+  // Query all users
   const usersSnap = await db.collection('users').get();
   
-  usersSnap.forEach((doc) => {
-    const data = doc.data();
-    if (data.mtaiId && mtaiIds.includes(data.mtaiId)) {
-      usersMap.set(data.mtaiId, {
-        uid: data.uid || '',
-        mtaiId: data.mtaiId,
-        email: data.email || doc.id,
-        displayName: data.displayName || data.email?.split('@')[0] || 'User',
+  usersSnap.forEach((docSnap) => {
+    const data = docSnap.data();
+    const email = data.email || docSnap.id;
+    const mtaiId = data.mtaiId || `TEMP-${docSnap.id.substring(0, 6).toUpperCase()}`;
+    
+    if (mtaiIds.includes(mtaiId)) {
+      usersMap.set(mtaiId, {
+        uid: data.uid || docSnap.id,
+        mtaiId: mtaiId,
+        email: email,
+        displayName: data.displayName || email.split('@')[0] || 'User',
         photoURL: data.photoURL || null,
         authProviders: data.authProviders || [],
       });

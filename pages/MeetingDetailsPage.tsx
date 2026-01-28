@@ -248,34 +248,60 @@ const MeetingDetailsPage: React.FC = () => {
           }
         }
 
-        // Load all users for dropdown (keyed by email, has mtaiId)
+        // Load all users for dropdown
         const usersSnap = await getDocs(collection(db, 'users'));
         const users: FirestoreUser[] = [];
+        let needsMigration = false;
+        
         usersSnap.forEach((docSnap) => {
           const data = docSnap.data();
-          // Only include users with MTAI IDs
-          if (data.mtaiId) {
-            users.push({
-              uid: data.uid || '',
-              mtaiId: data.mtaiId,
-              email: data.email || docSnap.id,
-              displayName: data.displayName || data.email?.split('@')[0] || 'User',
-              photoURL: data.photoURL || null,
-              authProviders: data.authProviders || [],
-            });
+          const email = data.email || docSnap.id;
+          
+          // Include all users, generate temporary MTAI ID if missing
+          const mtaiId = data.mtaiId || `TEMP-${docSnap.id.substring(0, 6).toUpperCase()}`;
+          
+          if (!data.mtaiId) {
+            needsMigration = true;
+            console.log('[MeetingDetails] User without MTAI ID:', email);
           }
+          
+          users.push({
+            uid: data.uid || docSnap.id,
+            mtaiId: mtaiId,
+            email: email,
+            displayName: data.displayName || email.split('@')[0] || 'User',
+            photoURL: data.photoURL || null,
+            authProviders: data.authProviders || [],
+          });
         });
+        
+        // Also add current user if not in list
+        if (user?.email && !users.find(u => u.email === user.email)) {
+          users.push({
+            uid: user.uid,
+            mtaiId: (user as any).mtaiId || `TEMP-${user.uid.substring(0, 6).toUpperCase()}`,
+            email: user.email,
+            displayName: user.displayName || user.email.split('@')[0] || 'User',
+            photoURL: user.photoURL || null,
+            authProviders: [],
+          });
+        }
+        
         // Sort by MTAI ID for consistency
         users.sort((a, b) => a.mtaiId.localeCompare(b.mtaiId));
         setUsersList(users);
         console.log('[MeetingDetails] Users loaded for mapping:', users.length);
+        
+        if (needsMigration) {
+          console.log('[MeetingDetails] Some users need MTAI ID migration - they will get IDs on next login');
+        }
       } catch (err) {
         console.error('[MeetingDetails] Error loading speakers/users:', err);
       }
     };
 
     loadSpeakers();
-  }, [id, meeting?.status, authLoading]);
+  }, [id, meeting?.status, authLoading, user]);
 
   // Handle speaker mapping change
   const handleMappingChange = (speakerId: string, email: string) => {

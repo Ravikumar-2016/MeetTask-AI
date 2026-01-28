@@ -173,6 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Create or update user document in Firestore
    * KEY: Uses email as document ID for deduplication
    * Merges auth providers if same email signs up multiple ways
+   * MIGRATION: Also migrates users from old UID-based storage
    */
   const saveUserToFirestore = useCallback(async (firebaseUser: FirebaseUser) => {
     if (!firebaseUser.email) {
@@ -186,12 +187,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userSnap = await getDoc(userRef);
       
       const isGoogleUser = firebaseUser.providerData.some(p => p.providerId === 'google.com');
-      const isPasswordUser = firebaseUser.providerData.some(p => p.providerId === 'password');
       const currentProvider: 'google' | 'password' = isGoogleUser ? 'google' : 'password';
 
+      // Check for old UID-based user document (migration)
+      let existingData: FirestoreUser | null = null;
+      let needsMigration = false;
+      
       if (userSnap.exists()) {
-        // EXISTING USER - merge auth providers
-        const existingData = userSnap.data() as FirestoreUser;
+        existingData = userSnap.data() as FirestoreUser;
+      } else {
+        // Check if user exists under old UID-based key
+        const oldUserRef = doc(db, 'users', firebaseUser.uid);
+        const oldUserSnap = await getDoc(oldUserRef);
+        
+        if (oldUserSnap.exists()) {
+          console.log('📦 Found old UID-based user, will migrate to email-based');
+          existingData = oldUserSnap.data() as FirestoreUser;
+          needsMigration = true;
+        }
+      }
+
+      if (existingData) {
+        // EXISTING USER - merge auth providers + ensure MTAI ID exists
         const existingProviders = existingData.authProviders || [];
         
         // Add current provider if not already in list
@@ -199,9 +216,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? existingProviders
           : [...existingProviders, currentProvider];
 
+        // Generate MTAI ID if user doesn't have one (migration for old users)
+        let mtaiId = existingData.mtaiId;
+        if (!mtaiId) {
+          console.log('📋 Generating MTAI ID for existing user...');
+          mtaiId = await generateMtaiId();
+        }
+
         await setDoc(userRef, {
-          // Keep existing mtaiId
-          mtaiId: existingData.mtaiId,
+          mtaiId, // Keep existing or newly generated
           uid: firebaseUser.uid, // Update to latest UID
           email: email,
           displayName: firebaseUser.displayName || existingData.displayName || email.split('@')[0],
@@ -210,7 +233,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: serverTimestamp()
         }, { merge: true });
         
-        console.log('✅ User merged, providers:', updatedProviders);
+        console.log('✅ User merged, MTAI ID:', mtaiId, 'providers:', updatedProviders);
+        
+        // If we migrated from UID-based, we could optionally delete the old document
+        // For now, leave it for backward compatibility
+        if (needsMigration) {
+          console.log('✅ User migrated from UID to email-based storage');
+        }
       } else {
         // NEW USER - generate MTAI ID
         const mtaiId = await generateMtaiId();
