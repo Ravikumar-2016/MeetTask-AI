@@ -46,7 +46,7 @@ export default async function handler(
 
   // Check environment variables (don't expose actual values!)
   const envStatus = {
-    GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+    ASSEMBLYAI_API_KEY: !!process.env.ASSEMBLYAI_API_KEY,
     OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
     FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,

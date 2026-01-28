@@ -1,10 +1,15 @@
 /**
- * Orchestrator API - Self-contained for Vercel
+ * Orchestrator API - Meeting Processing with AssemblyAI
  * 
  * POST /api/orchestrator
  * 
- * This is the ENTRY POINT for AI processing.
- * All dependencies are inlined to avoid Vercel bundling issues.
+ * Flow:
+ * 1. Verify auth & meeting ownership
+ * 2. Update status → "processing"
+ * 3. Transcribe with AssemblyAI (audio/video) or GPT-4 Vision (images)
+ * 4. Extract summary & tasks with GPT-4o-mini
+ * 5. Save transcript & tasks to Firestore
+ * 6. Update status → "completed" (or "error")
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -13,7 +18,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // ============================================
-// INLINE: Firebase Admin Setup
+// FIREBASE ADMIN SETUP
 // ============================================
 let adminApp: App;
 
@@ -52,7 +57,7 @@ function getAdminAuth() {
 }
 
 // ============================================
-// INLINE: Token Verification
+// AUTH VERIFICATION
 // ============================================
 interface AuthenticatedUser {
   uid: string;
@@ -67,22 +72,16 @@ async function verifyToken(request: VercelRequest): Promise<AuthenticatedUser> {
   }
 
   const token = authHeader.substring(7);
-  
-  if (!token) {
-    throw new Error('Empty token');
-  }
+  if (!token) throw new Error('Empty token');
 
   const auth = getAdminAuth();
   const decodedToken = await auth.verifyIdToken(token);
   
-  return {
-    uid: decodedToken.uid,
-    email: decodedToken.email,
-  };
+  return { uid: decodedToken.uid, email: decodedToken.email };
 }
 
 // ============================================
-// INLINE: AI Pipeline Types
+// TYPES
 // ============================================
 interface ExtractedTask {
   title: string;
@@ -92,85 +91,96 @@ interface ExtractedTask {
   priority: 'high' | 'medium' | 'low';
 }
 
-interface PipelineResult {
-  transcript: string;
-  summary: string;
-  tasks: ExtractedTask[];
+interface MeetingDoc {
+  userId: string;
+  title: string;
+  fileUrl?: string;
+  audioUrl?: string;
+  fileType?: 'audio' | 'video' | 'image';
+  status: string;
 }
 
 type FileType = 'audio' | 'video' | 'image';
 
 // ============================================
-// INLINE: Helper to download file as Buffer
+// ASSEMBLYAI TRANSCRIPTION
 // ============================================
 
-async function downloadFile(url: string): Promise<Buffer> {
-  console.log('📥 [Pipeline] Downloading file...');
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  console.log('✅ [Pipeline] Downloaded, size:', Math.round(buffer.length / 1024), 'KB');
-  return buffer;
-}
+async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: string; confidence: number; duration: number }> {
+  const apiKey = process.env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
 
-// ============================================
-// INLINE: AI Pipeline Functions using OpenAI
-// ============================================
+  console.log('🎤 [AssemblyAI] Starting transcription...');
+  console.log('📁 [AssemblyAI] Media URL:', mediaUrl.substring(0, 50) + '...');
 
-function getFileExtension(url: string): string {
-  return url.split('.').pop()?.toLowerCase().split('?')[0] || 'mp4';
-}
-
-// Transcribe using OpenAI Whisper API
-async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ text: string; wordCount: number }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
-
-  console.log('🎤 [Pipeline] Transcribing with OpenAI Whisper...');
-
-  // Download the file
-  const fileBuffer = await downloadFile(mediaUrl);
-  const extension = getFileExtension(mediaUrl);
-  
-  // Create form data for Whisper API
-  const formData = new FormData();
-  const blob = new Blob([fileBuffer], { type: `${fileType}/${extension}` });
-  formData.append('file', blob, `audio.${extension}`);
-  formData.append('model', 'whisper-1');
-  formData.append('response_format', 'text');
-
-  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+  // Step 1: Submit transcription request
+  const submitRes = await fetch('https://api.assemblyai.com/v2/transcript', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': apiKey,
+      'Content-Type': 'application/json',
     },
-    body: formData,
+    body: JSON.stringify({
+      audio_url: mediaUrl,
+      language_detection: true,
+    }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Whisper error: ${res.status} - ${errText}`);
+  if (!submitRes.ok) {
+    const errText = await submitRes.text();
+    throw new Error(`AssemblyAI submit error: ${submitRes.status} - ${errText}`);
   }
 
-  const text = await res.text();
-  
-  if (!text || text.trim().length === 0) {
-    throw new Error('Whisper returned empty transcript');
+  const submitData = await submitRes.json();
+  const transcriptId = submitData.id;
+  console.log('📝 [AssemblyAI] Transcript ID:', transcriptId);
+
+  // Step 2: Poll for completion (max 5 minutes)
+  const maxAttempts = 60; // 60 * 5s = 5 minutes
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+    
+    const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+      headers: { 'Authorization': apiKey },
+    });
+
+    if (!pollRes.ok) {
+      throw new Error(`AssemblyAI poll error: ${pollRes.status}`);
+    }
+
+    const pollData = await pollRes.json();
+    console.log('⏳ [AssemblyAI] Status:', pollData.status, `(attempt ${attempts + 1})`);
+
+    if (pollData.status === 'completed') {
+      console.log('✅ [AssemblyAI] Transcription complete!');
+      return {
+        text: pollData.text || '',
+        confidence: pollData.confidence || 0,
+        duration: pollData.audio_duration || 0,
+      };
+    }
+
+    if (pollData.status === 'error') {
+      throw new Error(`AssemblyAI error: ${pollData.error || 'Unknown error'}`);
+    }
+
+    attempts++;
   }
-  
-  console.log('✅ [Pipeline] Transcription done:', text.length, 'chars');
-  return { text: text.trim(), wordCount: text.trim().split(/\s+/).length };
+
+  throw new Error('AssemblyAI transcription timed out after 5 minutes');
 }
 
-// Extract text from image using OpenAI GPT-4 Vision
+// ============================================
+// IMAGE TEXT EXTRACTION (GPT-4 Vision)
+// ============================================
+
 async function extractTextFromImage(imageUrl: string): Promise<{ text: string; wordCount: number }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
-  console.log('🖼️ [Pipeline] Extracting text from image with GPT-4 Vision...');
+  console.log('🖼️ [GPT-4] Extracting text from image...');
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -199,15 +209,19 @@ async function extractTextFromImage(imageUrl: string): Promise<{ text: string; w
   const result = await res.json();
   const text = result.choices?.[0]?.message?.content || '';
   
-  console.log('✅ [Pipeline] Image extraction done:', text.length, 'chars');
+  console.log('✅ [GPT-4] Image extraction done:', text.length, 'chars');
   return { text, wordCount: text.split(/\s+/).length };
 }
+
+// ============================================
+// SUMMARY & TASK EXTRACTION (GPT-4o-mini)
+// ============================================
 
 async function extractSummaryAndTasks(transcript: string, meetingTitle: string): Promise<{ summary: string; tasks: ExtractedTask[] }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
-  console.log('🤖 [Pipeline] Extracting summary & tasks...');
+  console.log('🤖 [GPT-4] Extracting summary & tasks...');
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -220,9 +234,22 @@ async function extractSummaryAndTasks(transcript: string, meetingTitle: string):
       messages: [
         {
           role: 'system',
-          content: `Extract summary and tasks from meeting content. Return JSON: {"summary":"string","tasks":[{"title":"string","description":"string","assignedTo":"string","dueDate":"string","priority":"high|medium|low"}]}`
+          content: `Extract summary and tasks from meeting content. Return JSON only:
+{
+  "summary": "2-4 sentence summary",
+  "tasks": [
+    {
+      "title": "task title",
+      "description": "brief description",
+      "assignedTo": "person name or Unassigned",
+      "dueDate": "YYYY-MM-DD or No deadline",
+      "priority": "high|medium|low"
+    }
+  ]
+}
+If no tasks found, return empty tasks array.`
         },
-        { role: 'user', content: `Meeting: ${meetingTitle}\n\nContent:\n${transcript.substring(0, 10000)}` }
+        { role: 'user', content: `Meeting: ${meetingTitle}\n\nTranscript:\n${transcript.substring(0, 12000)}` }
       ],
       temperature: 0.3,
       max_tokens: 2000,
@@ -230,50 +257,70 @@ async function extractSummaryAndTasks(transcript: string, meetingTitle: string):
     }),
   });
 
-  if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GPT-4 extraction error: ${res.status} - ${errText}`);
+  }
 
   const result = await res.json();
   const content = result.choices?.[0]?.message?.content;
   
-  const parsed = JSON.parse(content || '{"summary":"","tasks":[]}');
-  console.log('✅ [Pipeline] Extraction done. Tasks:', parsed.tasks?.length || 0);
-  
-  return parsed;
+  try {
+    const parsed = JSON.parse(content || '{"summary":"","tasks":[]}');
+    console.log('✅ [GPT-4] Extraction done. Tasks:', parsed.tasks?.length || 0);
+    return {
+      summary: parsed.summary || 'No summary available.',
+      tasks: parsed.tasks || [],
+    };
+  } catch {
+    console.error('Failed to parse GPT response');
+    return { summary: 'Processing complete.', tasks: [] };
+  }
 }
 
-async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: string): Promise<PipelineResult> {
-  console.log('🚀 [Pipeline] Starting for:', meetingTitle);
+// ============================================
+// MAIN PIPELINE
+// ============================================
 
-  // Step 1: Get text
-  let transcription;
+async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: string) {
+  console.log('🚀 [Pipeline] Starting for:', meetingTitle);
+  console.log('📁 [Pipeline] File type:', fileType);
+
+  let transcript = '';
+  let confidence = 0;
+  let duration = 0;
+
+  // Step 1: Get transcript based on file type
   if (fileType === 'image') {
-    transcription = await extractTextFromImage(fileUrl);
+    const result = await extractTextFromImage(fileUrl);
+    transcript = result.text;
   } else {
-    transcription = await transcribeMedia(fileUrl, fileType);
+    // Audio or Video - use AssemblyAI
+    const result = await transcribeWithAssemblyAI(fileUrl);
+    transcript = result.text;
+    confidence = result.confidence;
+    duration = result.duration;
+  }
+
+  if (!transcript || transcript.trim().length === 0) {
+    throw new Error('No transcript could be generated');
   }
 
   // Step 2: Extract summary and tasks
-  const extraction = await extractSummaryAndTasks(transcription.text, meetingTitle);
+  const extraction = await extractSummaryAndTasks(transcript, meetingTitle);
 
   return {
-    transcript: transcription.text,
+    transcript,
+    confidence,
+    duration,
     summary: extraction.summary,
-    tasks: extraction.tasks || [],
+    tasks: extraction.tasks,
   };
 }
 
 // ============================================
 // MAIN HANDLER
 // ============================================
-
-interface MeetingDoc {
-  userId: string;
-  title: string;
-  fileUrl?: string;
-  audioUrl?: string;
-  fileType?: FileType;
-  status: string;
-}
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   // CORS
@@ -284,14 +331,25 @@ export default async function handler(request: VercelRequest, response: VercelRe
   if (request.method === 'OPTIONS') return response.status(200).end();
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed' });
 
-  console.log('\n🎯 [Orchestrator] Request received');
+  console.log('\n========================================');
+  console.log('🎯 [Orchestrator] Request received');
+  console.log('========================================\n');
+
+  const db = getAdminDb();
+  let meetingId: string | undefined;
 
   try {
     // Check env vars
-    if (!process.env.GEMINI_API_KEY || !process.env.OPENAI_API_KEY) {
+    if (!process.env.ASSEMBLYAI_API_KEY) {
       return response.status(500).json({
         success: false,
-        error: 'Missing GEMINI_API_KEY or OPENAI_API_KEY in environment variables',
+        error: 'ASSEMBLYAI_API_KEY not configured',
+      });
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      return response.status(500).json({
+        success: false,
+        error: 'OPENAI_API_KEY not configured',
       });
     }
 
@@ -301,12 +359,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('✅ User:', user.uid);
 
     // Get meetingId
-    const { meetingId } = request.body;
+    meetingId = request.body?.meetingId;
     if (!meetingId) {
       return response.status(400).json({ success: false, error: 'meetingId required' });
     }
+    console.log('📋 Meeting ID:', meetingId);
 
-    const db = getAdminDb();
     const meetingRef = db.collection('meetings').doc(meetingId);
     const meetingSnap = await meetingRef.get();
 
@@ -321,25 +379,32 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(403).json({ success: false, error: 'Not authorized' });
     }
 
-    // Check status
+    // Check if already completed
     if (meeting.status === 'completed') {
       return response.status(200).json({ success: true, message: 'Already processed' });
     }
 
     // Update to processing
-    await meetingRef.update({ status: 'processing', updatedAt: FieldValue.serverTimestamp() });
+    await meetingRef.update({ 
+      status: 'processing', 
+      updatedAt: FieldValue.serverTimestamp() 
+    });
     console.log('📊 Status → processing');
 
     // Get file URL
     const fileUrl = meeting.fileUrl || meeting.audioUrl;
     if (!fileUrl) {
-      await meetingRef.update({ status: 'error', errorMessage: 'No file URL' });
+      await meetingRef.update({ 
+        status: 'error', 
+        errorMessage: 'No file URL found',
+        updatedAt: FieldValue.serverTimestamp() 
+      });
       return response.status(400).json({ success: false, error: 'No file URL found' });
     }
 
     const fileType = (meeting.fileType || 'video') as FileType;
-    console.log('📁 File:', fileUrl.substring(0, 50) + '...');
-    console.log('📁 Type:', fileType);
+    console.log('📁 File URL:', fileUrl.substring(0, 60) + '...');
+    console.log('📁 File type:', fileType);
 
     // Run AI pipeline
     const result = await runPipeline(fileUrl, fileType, meeting.title || 'Untitled');
@@ -350,6 +415,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
       userId: user.uid,
       text: result.transcript,
       summary: result.summary,
+      confidence: result.confidence,
+      duration: result.duration,
       wordCount: result.transcript.split(/\s+/).length,
       createdAt: FieldValue.serverTimestamp(),
     });
@@ -382,10 +449,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
       status: 'completed',
       taskCount: result.tasks.length,
       summary: result.summary.substring(0, 500),
+      duration: result.duration,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    console.log('✅ [Orchestrator] Complete!');
+    console.log('\n========================================');
+    console.log('✅ [Orchestrator] Processing complete!');
+    console.log('========================================\n');
 
     return response.status(200).json({
       success: true,
@@ -397,18 +467,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
   } catch (error: any) {
     console.error('❌ [Orchestrator] Error:', error.message);
 
-    // Try to update meeting status to error
-    try {
-      const { meetingId } = request.body;
-      if (meetingId) {
-        const db = getAdminDb();
+    // Update meeting status to error
+    if (meetingId) {
+      try {
         await db.collection('meetings').doc(meetingId).update({
           status: 'error',
-          errorMessage: error.message,
+          errorMessage: error.message || 'Processing failed',
           updatedAt: FieldValue.serverTimestamp(),
         });
+      } catch (updateError) {
+        console.error('Failed to update error status:', updateError);
       }
-    } catch {}
+    }
 
     return response.status(500).json({
       success: false,
