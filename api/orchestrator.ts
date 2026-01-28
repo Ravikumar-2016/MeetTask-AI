@@ -161,14 +161,7 @@ FORMAT YOUR RESPONSE AS JSON:
 
 Return ONLY valid JSON, no other text.`;
 
-  // Try multiple model endpoints
-  const modelsToTry = [
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro-latest',
-    'gemini-pro-vision'
-  ];
-
+  // Try with v1 API (stable) - gemini-1.5-flash supports vision
   const requestBody = {
     contents: [{
       parts: [
@@ -187,59 +180,52 @@ Return ONLY valid JSON, no other text.`;
     }
   };
 
-  let lastError: string = '';
+  // Use v1 API with gemini-1.5-flash (supports vision)
+  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  console.log('🔮 [Gemini] Calling v1 API with gemini-1.5-flash...');
   
-  for (const modelName of modelsToTry) {
-    try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-      console.log(`🔮 [Gemini] Trying model: ${modelName}`);
-      
-      const apiResponse = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
+  try {
+    const apiResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
 
-      if (!apiResponse.ok) {
-        const errorText = await apiResponse.text();
-        console.log(`⚠️ [Gemini] Model ${modelName} failed: ${apiResponse.status}`);
-        lastError = errorText;
-        continue; // Try next model
-      }
-
-      const result = await apiResponse.json();
-      const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      
-      console.log(`✅ [Gemini] Success with ${modelName}`);
-      console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
-
-      // Try to parse JSON response
-      try {
-        let cleanJson = responseText
-          .replace(/```json\n?/g, '')
-          .replace(/```\n?/g, '')
-          .trim();
-        
-        const parsed = JSON.parse(cleanJson);
-        return {
-          summary: parsed.summary || 'Image analyzed successfully.',
-          keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
-        };
-      } catch (parseError) {
-        console.log('⚠️ [Gemini] JSON parse failed, using raw text');
-        return {
-          summary: responseText.substring(0, 500) || 'Image content extracted.',
-          keyPoints: []
-        };
-      }
-    } catch (fetchError: any) {
-      console.log(`⚠️ [Gemini] Fetch error for ${modelName}:`, fetchError.message);
-      lastError = fetchError.message;
+    const responseData = await apiResponse.json();
+    
+    if (!apiResponse.ok) {
+      console.error('❌ [Gemini] API error:', apiResponse.status, JSON.stringify(responseData));
+      throw new Error(JSON.stringify(responseData));
     }
-  }
 
-  // All models failed
-  throw new Error(`All Gemini models failed. Last error: ${lastError}`);
+    const responseText = responseData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    console.log('✅ [Gemini] Success!');
+    console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
+
+    // Try to parse JSON response
+    try {
+      let cleanJson = responseText
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      
+      const parsed = JSON.parse(cleanJson);
+      return {
+        summary: parsed.summary || 'Image analyzed successfully.',
+        keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
+      };
+    } catch (parseError) {
+      console.log('⚠️ [Gemini] JSON parse failed, using raw text');
+      return {
+        summary: responseText.substring(0, 500) || 'Image content extracted.',
+        keyPoints: []
+      };
+    }
+  } catch (error: any) {
+    console.error('❌ [Gemini] Error:', error.message);
+    throw new Error(`Gemini API failed: ${error.message}`);
+  }
 }
 
 // ============================================
