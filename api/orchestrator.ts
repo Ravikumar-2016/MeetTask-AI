@@ -101,10 +101,10 @@ interface PipelineResult {
 type FileType = 'audio' | 'video' | 'image';
 
 // ============================================
-// INLINE: Helper to download file and convert to base64
+// INLINE: Helper to download file as Buffer
 // ============================================
 
-async function downloadAsBase64(url: string): Promise<string> {
+async function downloadFile(url: string): Promise<Buffer> {
   console.log('📥 [Pipeline] Downloading file...');
   const response = await fetch(url);
   if (!response.ok) {
@@ -112,121 +112,92 @@ async function downloadAsBase64(url: string): Promise<string> {
   }
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-  const base64 = buffer.toString('base64');
   console.log('✅ [Pipeline] Downloaded, size:', Math.round(buffer.length / 1024), 'KB');
-  return base64;
+  return buffer;
 }
 
 // ============================================
-// INLINE: AI Pipeline Functions
+// INLINE: AI Pipeline Functions using OpenAI
 // ============================================
 
-function getMimeType(url: string, fileType: FileType): string {
-  const extension = url.split('.').pop()?.toLowerCase().split('?')[0];
-  
-  if (fileType === 'image') {
-    const imageMimes: Record<string, string> = {
-      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
-      'webp': 'image/webp', 'gif': 'image/gif',
-    };
-    return imageMimes[extension || ''] || 'image/jpeg';
-  }
-  
-  const mediaMimes: Record<string, string> = {
-    'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'mp4': 'video/mp4',
-    'mov': 'video/quicktime', 'webm': 'video/webm', 'm4a': 'audio/mp4',
-    'ogg': 'audio/ogg', 'flac': 'audio/flac',
-  };
-  
-  return mediaMimes[extension || ''] || 'video/mp4';
+function getFileExtension(url: string): string {
+  return url.split('.').pop()?.toLowerCase().split('?')[0] || 'mp4';
 }
 
+// Transcribe using OpenAI Whisper API
 async function transcribeMedia(mediaUrl: string, fileType: FileType): Promise<{ text: string; wordCount: number }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
-  console.log('🎤 [Pipeline] Transcribing media...');
+  console.log('🎤 [Pipeline] Transcribing with OpenAI Whisper...');
 
-  // Download file and convert to base64
-  const base64Data = await downloadAsBase64(mediaUrl);
-  const mimeType = getMimeType(mediaUrl, fileType);
+  // Download the file
+  const fileBuffer = await downloadFile(mediaUrl);
+  const extension = getFileExtension(mediaUrl);
+  
+  // Create form data for Whisper API
+  const formData = new FormData();
+  const blob = new Blob([fileBuffer], { type: `${fileType}/${extension}` });
+  formData.append('file', blob, `audio.${extension}`);
+  formData.append('model', 'whisper-1');
+  formData.append('response_format', 'text');
 
-  // Use gemini-1.5-flash-latest with inline base64 data
-  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-
-  const res = await fetch(endpoint, {
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: `Transcribe this ${fileType} file accurately. Output the full verbatim transcript. Include all spoken words.` },
-          { 
-            inlineData: { 
-              mimeType: mimeType,
-              data: base64Data
-            } 
-          }
-        ]
-      }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
-    }),
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: formData,
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini error: ${res.status} - ${errText}`);
+    throw new Error(`Whisper error: ${res.status} - ${errText}`);
   }
 
-  const result = await res.json();
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text = await res.text();
   
-  if (!text) {
-    throw new Error('Gemini returned empty transcript');
+  if (!text || text.trim().length === 0) {
+    throw new Error('Whisper returned empty transcript');
   }
   
   console.log('✅ [Pipeline] Transcription done:', text.length, 'chars');
-  return { text, wordCount: text.split(/\s+/).length };
+  return { text: text.trim(), wordCount: text.trim().split(/\s+/).length };
 }
 
+// Extract text from image using OpenAI GPT-4 Vision
 async function extractTextFromImage(imageUrl: string): Promise<{ text: string; wordCount: number }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
 
-  console.log('🖼️ [Pipeline] Extracting text from image...');
+  console.log('🖼️ [Pipeline] Extracting text from image with GPT-4 Vision...');
 
-  // Download image and convert to base64
-  const base64Data = await downloadAsBase64(imageUrl);
-  const mimeType = getMimeType(imageUrl, 'image');
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-
-  const res = await fetch(endpoint, {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
     body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: 'Extract all text and describe any diagrams, action items, or tasks visible in this image.' },
-          { 
-            inlineData: { 
-              mimeType: mimeType,
-              data: base64Data
-            } 
-          }
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Extract all text from this image. Also describe any diagrams, action items, or tasks visible.' },
+          { type: 'image_url', image_url: { url: imageUrl } }
         ]
       }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
+      max_tokens: 4096,
     }),
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini vision error: ${res.status} - ${errText}`);
+    throw new Error(`GPT-4 Vision error: ${res.status} - ${errText}`);
   }
 
   const result = await res.json();
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text = result.choices?.[0]?.message?.content || '';
   
   console.log('✅ [Pipeline] Image extraction done:', text.length, 'chars');
   return { text, wordCount: text.split(/\s+/).length };
