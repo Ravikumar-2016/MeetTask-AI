@@ -17,7 +17,8 @@ function getGeminiClient() {
 }
 
 // Model for text generation (task extraction, summaries, etc.)
-export const GEMINI_TEXT_MODEL = 'gemini-1.5-flash';
+// Using gemini-1.0-pro - universally available on all accounts (free tier)
+export const GEMINI_TEXT_MODEL = 'gemini-1.0-pro';
 
 /**
  * Get Gemini model for text generation
