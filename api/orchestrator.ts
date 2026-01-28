@@ -156,19 +156,45 @@ interface VideoAnalysisResult {
 // ============================================
 
 function getCloudinaryFrameUrl(videoUrl: string, timestampSeconds: number): string {
+  console.log('🔗 [Cloudinary] Parsing URL:', videoUrl.substring(0, 80));
+  
+  // Pattern 1: Standard Cloudinary URL
+  // https://res.cloudinary.com/{cloud_name}/video/upload/v{version}/{public_id}.{ext}
   const cloudinaryRegex = /https:\/\/res\.cloudinary\.com\/([^\/]+)\/([^\/]+)\/upload\/(?:v\d+\/)?(.+)$/;
   const match = videoUrl.match(cloudinaryRegex);
   
-  if (!match) {
-    console.warn('[Video] Not a Cloudinary URL, cannot extract frames');
-    return '';
+  if (match) {
+    const [, cloudName, resourceType, publicIdWithExt] = match;
+    
+    // Remove file extension
+    const publicId = publicIdWithExt.replace(/\.[^.]+$/, '');
+    
+    // Build frame extraction URL
+    // so_ = start offset, f_ = format, w_ = width, q_ = quality
+    const frameUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${timestampSeconds},f_jpg,w_1920,q_90/${publicId}.jpg`;
+    
+    console.log('✅ [Cloudinary] Generated frame URL:', frameUrl.substring(0, 100));
+    return frameUrl;
   }
   
-  const [, cloudName, resourceType, publicIdWithExt] = match;
-  const publicId = publicIdWithExt.replace(/\.[^.]+$/, '');
+  // Pattern 2: URL with existing transformations
+  const transformedRegex = /https:\/\/res\.cloudinary\.com\/([^\/]+)\/([^\/]+)\/upload\/([^\/]+)\/(.+)$/;
+  const match2 = videoUrl.match(transformedRegex);
   
-  // Cloudinary transformation: extract frame at timestamp as JPEG
-  return `https://res.cloudinary.com/${cloudName}/video/upload/so_${timestampSeconds},f_jpg,w_1280,q_auto/${publicId}.jpg`;
+  if (match2) {
+    const [, cloudName, resourceType, existingTransforms, publicIdWithExt] = match2;
+    const publicId = publicIdWithExt.replace(/\.[^.]+$/, '');
+    
+    // Add our transforms before existing ones
+    const frameUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${timestampSeconds},f_jpg,w_1920,q_90/${publicId}.jpg`;
+    
+    console.log('✅ [Cloudinary] Generated frame URL (v2):', frameUrl.substring(0, 100));
+    return frameUrl;
+  }
+  
+  console.log('❌ [Cloudinary] Could not parse URL format');
+  console.log('❌ [Cloudinary] Expected format: https://res.cloudinary.com/{cloud}/video/upload/...');
+  return '';
 }
 
 // ============================================
@@ -177,26 +203,74 @@ function getCloudinaryFrameUrl(videoUrl: string, timestampSeconds: number): stri
 
 async function detectTextInImage(imageUrl: string): Promise<string[]> {
   const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    console.log('❌ [Vision] No API key');
+    return [];
+  }
+  
+  console.log('🔍 [Vision] Analyzing frame:', imageUrl.substring(0, 100) + '...');
   
   try {
+    // First, try to fetch the image and convert to base64
+    // This is more reliable than passing URL to Vision API
+    let imageData: { content?: string; source?: { imageUri: string } };
+    
+    try {
+      console.log('📥 [Vision] Fetching image...');
+      const imageResponse = await fetch(imageUrl);
+      
+      if (imageResponse.ok) {
+        const arrayBuffer = await imageResponse.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        imageData = { content: base64 };
+        console.log('✅ [Vision] Image fetched, size:', Math.round(base64.length / 1024), 'KB');
+      } else {
+        console.log('⚠️ [Vision] Could not fetch image, trying URL method. Status:', imageResponse.status);
+        imageData = { source: { imageUri: imageUrl } };
+      }
+    } catch (fetchErr) {
+      console.log('⚠️ [Vision] Fetch failed, trying URL method:', fetchErr);
+      imageData = { source: { imageUri: imageUrl } };
+    }
+    
     const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         requests: [{
-          image: { source: { imageUri: imageUrl } },
+          image: imageData,
           features: [{ type: 'TEXT_DETECTION', maxResults: 50 }],
         }],
       }),
     });
     
-    if (!response.ok) return [];
+    if (!response.ok) {
+      const errText = await response.text();
+      console.log('❌ [Vision] API error:', response.status, errText.substring(0, 300));
+      return [];
+    }
     
     const data = await response.json();
+    
+    // Check for errors in response
+    if (data.responses?.[0]?.error) {
+      console.log('❌ [Vision] Response error:', data.responses[0].error.message);
+      return [];
+    }
+    
     const annotations = data.responses?.[0]?.textAnnotations || [];
-    return annotations.map((a: any) => a.description);
-  } catch {
+    const texts = annotations.map((a: any) => a.description);
+    
+    // Log the full text detected (first annotation is the complete text)
+    if (texts.length > 0) {
+      console.log('📝 [Vision] Full text detected:', texts[0]?.substring(0, 500));
+    } else {
+      console.log('📝 [Vision] No text detected in frame');
+    }
+    
+    return texts;
+  } catch (err: any) {
+    console.log('❌ [Vision] Exception:', err.message);
     return [];
   }
 }
@@ -206,41 +280,97 @@ async function detectTextInImage(imageUrl: string): Promise<string[]> {
 // ============================================
 
 function extractSpeakerNamesFromOCR(detectedTexts: string[]): string[] {
+  if (detectedTexts.length === 0) return [];
+  
   const names: string[] = [];
   
-  // Filter words (UI elements)
+  // Get the full text (first element contains all text)
+  const fullText = detectedTexts[0] || '';
+  
+  // Split by newlines to get individual lines (Zoom tiles have names on separate lines)
+  const lines = fullText.split(/[\n\r]+/).map(l => l.trim()).filter(l => l.length > 0);
+  
+  console.log('📋 [OCR] Lines detected:', lines.length);
+  
+  // Filter words (UI elements) - be more permissive
   const filterWords = new Set([
-    'zoom', 'meet', 'teams', 'webex', 'mute', 'unmute', 'video', 'audio',
-    'share', 'screen', 'chat', 'record', 'recording', 'participants', 'host',
-    'leave', 'end', 'meeting', 'you', 'me', 'pin', 'spotlight', 'gallery',
-    'view', 'speaker', 'grid', 'reactions', 'raise', 'hand', 'more',
-    'security', 'breakout', 'rooms', 'polls', 'apps', 'live', 'transcript',
-    'captions', 'settings', 'minimize', 'maximize',
+    'zoom', 'mute', 'unmute', 'video off', 'start video', 'stop video',
+    'share screen', 'chat', 'record', 'recording', 'participants',
+    'leave', 'end meeting', 'reactions', 'raise hand', 'more',
+    'security', 'breakout rooms', 'polls', 'apps', 'live transcript',
+    'closed caption', 'cc', 'invite', 'manage participants',
+    'waiting room', 'in meeting', 'connecting', 'joining',
   ]);
   
-  for (const text of detectedTexts) {
-    if (text.length < 3 || text.length > 50) continue;
+  for (const line of lines) {
+    // Skip very short or very long strings
+    if (line.length < 4 || line.length > 40) continue;
     
-    const lowerText = text.toLowerCase();
-    if ([...filterWords].some(w => lowerText.includes(w))) continue;
-    if (/^\d+$/.test(text) || /^[^a-zA-Z]+$/.test(text)) continue;
+    const lowerLine = line.toLowerCase();
     
-    // Check for "FirstName LastName" pattern (2-3 capitalized words)
-    const words = text.trim().split(/\s+/);
-    if (words.length >= 2 && words.length <= 4) {
-      // Allow format like "Eric Johnson - VP" → take "Eric Johnson"
-      const namePart = text.split(/\s*[-–—]\s*/)[0].trim();
-      const nameWords = namePart.split(/\s+/);
-      
-      if (nameWords.length >= 2 && nameWords.length <= 3) {
-        const allCapitalized = nameWords.every(w => /^[A-Z][a-z]+$/.test(w));
-        if (allCapitalized && !names.includes(namePart)) {
-          names.push(namePart);
+    // Skip if it's a UI element
+    if ([...filterWords].some(w => lowerLine.includes(w))) continue;
+    
+    // Skip if mostly numbers, special chars, or single words
+    if (/^\d+$/.test(line) || /^[^a-zA-Z]+$/.test(line)) continue;
+    
+    // Look for name patterns
+    // Pattern 1: "FirstName LastName" (exactly 2-3 capitalized words)
+    const words = line.split(/\s+/);
+    
+    // Pattern 2: "Name - Title" or "Name — Title" (take part before dash)
+    const beforeDash = line.split(/\s*[-–—]\s*/)[0].trim();
+    const dashWords = beforeDash.split(/\s+/);
+    
+    // Try the part before dash first
+    if (dashWords.length >= 2 && dashWords.length <= 3) {
+      const allCapitalized = dashWords.every(w => /^[A-Z][a-z]+$/.test(w));
+      if (allCapitalized && !names.includes(beforeDash)) {
+        console.log('✅ [OCR] Found name (dash pattern):', beforeDash);
+        names.push(beforeDash);
+        continue;
+      }
+    }
+    
+    // Try full line if 2-3 words
+    if (words.length >= 2 && words.length <= 3) {
+      const allCapitalized = words.every(w => /^[A-Z][a-z]+$/.test(w));
+      if (allCapitalized && !names.includes(line)) {
+        console.log('✅ [OCR] Found name (full line):', line);
+        names.push(line);
+        continue;
+      }
+    }
+    
+    // Pattern 3: Less strict - just look for "Firstname L" or "F. Lastname" patterns
+    const namePattern = /^([A-Z][a-z]+)\s+([A-Z][a-z]+|[A-Z]\.)$/;
+    const match = line.match(namePattern);
+    if (match && !names.includes(line)) {
+      console.log('✅ [OCR] Found name (pattern match):', line);
+      names.push(line);
+    }
+  }
+  
+  // Also check individual detected text items (not just the full text)
+  for (let i = 1; i < detectedTexts.length; i++) {
+    const text = detectedTexts[i]?.trim();
+    if (!text || text.length < 4 || text.length > 40) continue;
+    
+    const words = text.split(/\s+/);
+    if (words.length === 2 || words.length === 3) {
+      const allCapitalized = words.every(w => /^[A-Z][a-z]+$/.test(w));
+      if (allCapitalized && !names.includes(text)) {
+        // Extra check: not a common phrase
+        const lowerText = text.toLowerCase();
+        if (!['thank you', 'good morning', 'good afternoon', 'see you'].some(p => lowerText.includes(p))) {
+          console.log('✅ [OCR] Found name (individual item):', text);
+          names.push(text);
         }
       }
     }
   }
   
+  console.log('👥 [OCR] Total names extracted:', names);
   return names;
 }
 
@@ -249,49 +379,82 @@ function extractSpeakerNamesFromOCR(detectedTexts: string[]): string[] {
 // ============================================
 
 async function analyzeVideoForSpeakers(videoUrl: string, durationSeconds: number): Promise<VideoAnalysisResult> {
-  console.log('🎬 [VideoAnalysis] Starting video analysis for speaker names...');
+  console.log('🎬 [VideoAnalysis] ===== STARTING VIDEO ANALYSIS =====');
+  console.log('🎬 [VideoAnalysis] Video URL:', videoUrl);
+  console.log('🎬 [VideoAnalysis] Duration:', durationSeconds, 'seconds');
   
-  if (!process.env.GOOGLE_CLOUD_VISION_API_KEY) {
-    console.log('⚠️ [VideoAnalysis] GOOGLE_CLOUD_VISION_API_KEY not set, skipping');
+  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+  if (!apiKey) {
+    console.log('❌ [VideoAnalysis] GOOGLE_CLOUD_VISION_API_KEY not set!');
+    return { speakers: [], totalFramesAnalyzed: 0, videoDuration: durationSeconds };
+  }
+  console.log('✅ [VideoAnalysis] Google Vision API key is configured');
+  
+  // Test Cloudinary URL parsing
+  const testFrameUrl = getCloudinaryFrameUrl(videoUrl, 5);
+  console.log('🔗 [VideoAnalysis] Test frame URL:', testFrameUrl);
+  
+  if (!testFrameUrl) {
+    console.log('❌ [VideoAnalysis] Failed to generate Cloudinary frame URL');
     return { speakers: [], totalFramesAnalyzed: 0, videoDuration: durationSeconds };
   }
   
+  // Use the actual duration, but cap at 5 minutes for analysis
+  const maxDuration = Math.min(durationSeconds, 300);
+  
   const frameTimestamps: number[] = [];
-  // Extract frames every 15 seconds, starting at 5 seconds
-  for (let t = 5; t < durationSeconds && t < 300; t += 15) { // Max 5 min analysis
+  // Extract frames every 10 seconds (more frequent for better detection)
+  for (let t = 5; t < maxDuration; t += 10) {
     frameTimestamps.push(t);
   }
   
-  console.log('📸 [VideoAnalysis] Analyzing', frameTimestamps.length, 'frames');
+  // Ensure at least 5 frames even for short videos
+  if (frameTimestamps.length < 5 && maxDuration > 10) {
+    for (let t = 2; t < maxDuration; t += 5) {
+      if (!frameTimestamps.includes(t)) {
+        frameTimestamps.push(t);
+      }
+    }
+    frameTimestamps.sort((a, b) => a - b);
+  }
+  
+  console.log('📸 [VideoAnalysis] Will analyze', frameTimestamps.length, 'frames at timestamps:', frameTimestamps.slice(0, 10).join(', '), '...');
   
   const speakerMap = new Map<string, DetectedSpeaker>();
   let framesAnalyzed = 0;
+  let framesWithText = 0;
   
-  // Process in batches of 3 to avoid rate limits
-  for (let i = 0; i < frameTimestamps.length; i += 3) {
-    const batch = frameTimestamps.slice(i, i + 3);
+  // Process in batches of 2 to avoid rate limits
+  for (let i = 0; i < frameTimestamps.length; i += 2) {
+    const batch = frameTimestamps.slice(i, i + 2);
+    console.log(`\n📷 [VideoAnalysis] Processing batch ${Math.floor(i/2) + 1}/${Math.ceil(frameTimestamps.length/2)}, timestamps: ${batch.join(', ')}`);
     
     const results = await Promise.all(batch.map(async (timestamp) => {
       const frameUrl = getCloudinaryFrameUrl(videoUrl, timestamp);
-      if (!frameUrl) return { timestamp, names: [] };
+      if (!frameUrl) {
+        console.log('⚠️ [VideoAnalysis] Could not generate frame URL for t=' + timestamp);
+        return { timestamp, names: [], rawTexts: [] };
+      }
       
       const texts = await detectTextInImage(frameUrl);
       const names = extractSpeakerNamesFromOCR(texts);
-      return { timestamp, names };
+      return { timestamp, names, rawTexts: texts };
     }));
     
-    for (const { timestamp, names } of results) {
+    for (const { timestamp, names, rawTexts } of results) {
       framesAnalyzed++;
+      if (rawTexts.length > 0) framesWithText++;
+      
       for (const name of names) {
         const existing = speakerMap.get(name);
         if (existing) {
           existing.occurrences++;
           existing.lastSeenAt = timestamp;
-          existing.confidence = Math.min(0.95, existing.confidence + 0.05);
+          existing.confidence = Math.min(0.95, existing.confidence + 0.1);
         } else {
           speakerMap.set(name, {
             name,
-            confidence: 0.6,
+            confidence: 0.7,
             firstSeenAt: timestamp,
             lastSeenAt: timestamp,
             occurrences: 1,
@@ -300,18 +463,22 @@ async function analyzeVideoForSpeakers(videoUrl: string, durationSeconds: number
       }
     }
     
-    // Small delay between batches
-    if (i + 3 < frameTimestamps.length) {
-      await new Promise(r => setTimeout(r, 300));
+    // Delay between batches to avoid rate limits
+    if (i + 2 < frameTimestamps.length) {
+      await new Promise(r => setTimeout(r, 500));
     }
   }
   
-  // Filter: must appear in at least 2 frames
+  console.log('\n📊 [VideoAnalysis] ===== ANALYSIS COMPLETE =====');
+  console.log('📊 [VideoAnalysis] Frames analyzed:', framesAnalyzed);
+  console.log('📊 [VideoAnalysis] Frames with text:', framesWithText);
+  console.log('📊 [VideoAnalysis] Unique names found:', speakerMap.size);
+  
+  // Don't filter - keep all names found (even if only seen once)
   const speakers = [...speakerMap.values()]
-    .filter(s => s.occurrences >= 2)
     .sort((a, b) => b.occurrences - a.occurrences);
   
-  console.log('✅ [VideoAnalysis] Detected speakers from video:', speakers.map(s => s.name));
+  console.log('👥 [VideoAnalysis] Final speaker list:', speakers.map(s => `${s.name} (${s.occurrences}x)`));
   
   return {
     speakers,
@@ -721,22 +888,9 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     // MULTI-MODAL PROCESSING (Audio + Video)
     // ============================================
     
-    // Run BOTH audio transcription AND video analysis in PARALLEL
-    console.log('🔄 [Pipeline] Starting parallel audio + video analysis...');
-    
-    const [audioResult, videoResult] = await Promise.all([
-      // Audio: AssemblyAI transcription with speaker diarization
-      transcribeWithAssemblyAI(fileUrl),
-      
-      // Video: Extract speaker names from video tiles (if video type)
-      fileType === 'video' 
-        ? analyzeVideoForSpeakers(fileUrl, 600) // Analyze up to 10 min
-            .catch(err => {
-              console.log('⚠️ [Pipeline] Video analysis failed, continuing with audio only:', err.message);
-              return { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 } as VideoAnalysisResult;
-            })
-        : Promise.resolve({ speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 } as VideoAnalysisResult)
-    ]);
+    // Step 1: First run audio transcription to get duration and transcript
+    console.log('🔄 [Pipeline] Step 1: Audio transcription...');
+    const audioResult = await transcribeWithAssemblyAI(fileUrl);
     
     transcript = audioResult.text;
     confidence = audioResult.confidence;
@@ -744,21 +898,34 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
     utterances = audioResult.utterances;
     
     console.log('📊 [Pipeline] Audio analysis complete:');
-    console.log('   - Transcript length:', transcript.length);
-    console.log('   - Audio speakers (A, B, C...):', [...new Set(utterances.map(u => u.speaker))]);
+    console.log('   - Transcript length:', transcript.length, 'chars');
+    console.log('   - Duration:', duration, 'seconds');
+    console.log('   - Audio speakers:', [...new Set(utterances.map(u => u.speaker))]);
     
-    // Use video analysis results for speaker mapping if available
+    // Step 2: Run video analysis with actual duration (if video type)
+    let videoResult: VideoAnalysisResult = { speakers: [], totalFramesAnalyzed: 0, videoDuration: 0 };
+    
+    if (fileType === 'video' && duration > 0) {
+      console.log('🔄 [Pipeline] Step 2: Video analysis for speaker names...');
+      try {
+        videoResult = await analyzeVideoForSpeakers(fileUrl, duration);
+      } catch (err: any) {
+        console.log('⚠️ [Pipeline] Video analysis failed:', err.message);
+      }
+    } else {
+      console.log('⏭️ [Pipeline] Skipping video analysis (fileType:', fileType, ', duration:', duration, ')');
+    }
+    
+    // Step 3: Map speakers
     if (videoResult.speakers.length > 0) {
-      console.log('📊 [Pipeline] Video analysis complete:');
+      console.log('📊 [Pipeline] Video analysis results:');
       console.log('   - Frames analyzed:', videoResult.totalFramesAnalyzed);
       console.log('   - Names detected:', videoResult.speakers.map(s => s.name));
       
-      // Map audio speaker IDs (A, B, C) to real names from video
       speakerMapping = mapAudioSpeakersToVideoNames(utterances, videoResult.speakers);
       videoAnalysisUsed = true;
     } else {
-      // Fallback: Try to extract names from transcript
-      console.log('⚠️ [Pipeline] No video names detected, using audio-only mapping');
+      console.log('⚠️ [Pipeline] No video names detected, using fallback speaker labels');
       speakerMapping = mapAudioSpeakersToVideoNames(utterances, []);
     }
     
