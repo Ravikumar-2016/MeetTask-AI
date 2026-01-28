@@ -50,7 +50,7 @@ export interface User {
 // ============================================
 
 export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'analyzing' | 'completed' | 'error';
-export type FileType = 'image' | 'video' | 'audio' | 'pdf';
+export type FileType = 'video' | 'audio';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
 
@@ -85,7 +85,6 @@ export interface Meeting {
   speakerMappingComplete?: boolean;
   summary?: string;
   duration?: number;
-  ocrText?: string;                // OCR text for images
 }
 
 // ============================================

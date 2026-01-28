@@ -1,18 +1,19 @@
 /**
- * Orchestrator API - ASYNC Job Submitter
+ * Orchestrator API - Audio/Video Processing
  * 
  * POST /api/orchestrator
  * 
- * This endpoint DOES NOT process the meeting. It only:
+ * This endpoint handles meeting processing:
  * 1. Validates auth & meeting ownership
- * 2. Submits transcription job to AssemblyAI with webhook URL
- * 3. Updates status to "transcribing"
- * 4. Returns immediately (~2-3 seconds)
+ * 2. Rejects image/PDF uploads (audio/video only)
+ * 3. Submits transcription job to AssemblyAI with webhook URL
+ * 4. Updates status to "transcribing"
+ * 5. Returns immediately (~2-3 seconds)
  * 
  * The actual processing happens when AssemblyAI calls /api/webhook/assemblyai
  * 
  * Status Flow:
- * uploaded → transcribing → analyzing → completed
+ * uploaded → transcribing → needs_mapping → completed
  *                       ↘ error (if failed)
  */
 
@@ -92,140 +93,8 @@ interface MeetingDoc {
   title: string;
   fileUrl?: string;
   audioUrl?: string;
-  fileType?: 'audio' | 'video' | 'image' | 'pdf';
+  fileType?: 'audio' | 'video';
   status: string;
-  ocrText?: string;
-}
-
-// ============================================
-// GEMINI VISION - SIMPLE IMAGE/PDF SUMMARIZER
-// Uses REST API directly for better reliability
-// ============================================
-
-async function summarizeImageOrPdf(fileUrl: string, fileType: 'image' | 'pdf'): Promise<{ summary: string; keyPoints: string[] }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
-
-  console.log('🔮 [Gemini] Summarizing:', fileType);
-  
-  // PDF files cannot be directly processed - return a helpful message
-  if (fileType === 'pdf') {
-    console.log('⚠️ [Gemini] PDF direct processing not supported');
-    return {
-      summary: 'PDF files cannot be processed directly. Please convert your PDF to an image (screenshot or export as PNG/JPG) and upload the image instead.',
-      keyPoints: ['Convert PDF to image format (PNG/JPG)', 'Take a screenshot of each page', 'Upload images separately']
-    };
-  }
-
-  // Fetch the image from Cloudinary
-  console.log('📥 [Gemini] Fetching image from:', fileUrl.substring(0, 80) + '...');
-  
-  const fetchResponse = await fetch(fileUrl);
-  
-  if (!fetchResponse.ok) {
-    throw new Error(`Failed to fetch file: ${fetchResponse.status}`);
-  }
-
-  const buffer = await fetchResponse.arrayBuffer();
-  const base64Data = Buffer.from(buffer).toString('base64');
-  
-  // Determine MIME type from URL
-  let mimeType = 'image/jpeg';
-  const urlLower = fileUrl.toLowerCase();
-  if (urlLower.includes('.png')) mimeType = 'image/png';
-  else if (urlLower.includes('.webp')) mimeType = 'image/webp';
-  else if (urlLower.includes('.gif')) mimeType = 'image/gif';
-  else if (urlLower.includes('.jpg') || urlLower.includes('.jpeg')) mimeType = 'image/jpeg';
-
-  console.log('🔮 [Gemini] MIME type:', mimeType, 'Size:', Math.round(buffer.byteLength / 1024), 'KB');
-
-  const prompt = `Analyze this image and provide a helpful summary.
-
-If this is a meeting notes image, whiteboard, document, or screenshot:
-1. Extract and summarize the main content
-2. List key points, action items, or important information
-3. Note any dates, names, or deadlines mentioned
-
-If this is a general image:
-1. Describe what's shown in the image
-2. Extract any visible text
-3. Note any relevant details
-
-FORMAT YOUR RESPONSE AS JSON:
-{
-  "summary": "A 2-3 sentence summary of the image content",
-  "keyPoints": ["Point 1", "Point 2", "Point 3"]
-}
-
-Return ONLY valid JSON, no other text.`;
-
-  // Try with v1 API (stable) - gemini-1.5-flash supports vision
-  const requestBody = {
-    contents: [{
-      parts: [
-        { text: prompt },
-        { 
-          inlineData: { 
-            mimeType: mimeType, 
-            data: base64Data 
-          } 
-        }
-      ]
-    }],
-    generationConfig: {
-      temperature: 0.3,
-      maxOutputTokens: 1024,
-    }
-  };
-
-  // Use v1 API with gemini-1.5-flash (supports vision)
-  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-  console.log('🔮 [Gemini] Calling v1 API with gemini-1.5-flash...');
-  
-  try {
-    const apiResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
-
-    const responseData = await apiResponse.json();
-    
-    if (!apiResponse.ok) {
-      console.error('❌ [Gemini] API error:', apiResponse.status, JSON.stringify(responseData));
-      throw new Error(JSON.stringify(responseData));
-    }
-
-    const responseText = responseData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
-    console.log('✅ [Gemini] Success!');
-    console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
-
-    // Try to parse JSON response
-    try {
-      let cleanJson = responseText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      
-      const parsed = JSON.parse(cleanJson);
-      return {
-        summary: parsed.summary || 'Image analyzed successfully.',
-        keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
-      };
-    } catch (parseError) {
-      console.log('⚠️ [Gemini] JSON parse failed, using raw text');
-      return {
-        summary: responseText.substring(0, 500) || 'Image content extracted.',
-        keyPoints: []
-      };
-    }
-  } catch (error: any) {
-    console.error('❌ [Gemini] Error:', error.message);
-    throw new Error(`Gemini API failed: ${error.message}`);
-  }
 }
 
 // ============================================
@@ -279,7 +148,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed' });
 
   console.log('\n========================================');
-  console.log('🎯 [Orchestrator] Job submission request');
+  console.log('🎯 [Orchestrator] Processing request');
   console.log('========================================\n');
 
   const db = getAdminDb();
@@ -341,68 +210,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     console.log('📁 File URL:', fileUrl.substring(0, 60) + '...');
-    console.log('📁 File type:', meeting.fileType || 'unknown');
-
-    // ============================================
-    // HANDLE IMAGES & PDFs: Simple Summary (No Task Tracking)
-    // ============================================
-    if (meeting.fileType === 'image' || meeting.fileType === 'pdf') {
-      const fileTypeLabel = meeting.fileType === 'pdf' ? 'PDF' : 'Image';
-      console.log(`🖼️ [Orchestrator] ${fileTypeLabel} file detected - using simple summary mode`);
-      
-      // Update status to processing
-      await meetingRef.update({
-        status: 'processing',
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      let summary = '';
-      let keyPoints: string[] = [];
-      
-      try {
-        // Get summary using Gemini Vision API
-        const result = await summarizeImageOrPdf(fileUrl, meeting.fileType as 'image' | 'pdf');
-        summary = result.summary;
-        keyPoints = result.keyPoints;
-        console.log('📝 Summary:', summary.substring(0, 100));
-        console.log('📝 Key points:', keyPoints.length);
-      } catch (error: any) {
-        console.error('❌ [Orchestrator] Summary failed:', error.message);
-        summary = `Could not analyze ${fileTypeLabel.toLowerCase()}. Error: ${error.message}`;
-        keyPoints = ['Please review the file manually'];
-      }
-      
-      // Mark as COMPLETED immediately (no mapping needed for images/PDFs)
-      await meetingRef.update({
-        status: 'completed',
-        summary: summary,
-        keyPoints: keyPoints,
-        processingNote: `${fileTypeLabel} analyzed with AI. No task tracking for this file type.`,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-
-      // Create a simple transcript record (for consistency)
-      await db.collection('transcripts').doc(meetingId).set({
-        meetingId,
-        userId: user.uid,
-        text: summary,
-        formattedTranscript: `📋 ${fileTypeLabel} Summary:\n\n${summary}\n\n📌 Key Points:\n${keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n') || 'No specific points extracted.'}`,
-        summary: summary,
-        keyPoints: keyPoints,
-        fileType: meeting.fileType,
-        isImageOrPdf: true,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      return response.status(200).json({
-        success: true,
-        message: `${fileTypeLabel} analyzed successfully`,
-        meetingId,
-        status: 'completed',
-        summary: summary,
-        keyPoints: keyPoints,
-      });
-    }
+    console.log('📁 File type:', meeting.fileType || 'audio');
 
     // ============================================
     // AUDIO/VIDEO: Submit to AssemblyAI

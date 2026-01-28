@@ -269,10 +269,6 @@ export const getStatusLabel = (status: MeetingStatus | string): string => {
  */
 export const getFileTypeIcon = (fileType?: string): string => {
   switch (fileType) {
-    case 'image':
-      return 'image';
-    case 'pdf':
-      return 'picture_as_pdf';
     case 'video':
       return 'videocam';
     case 'audio':

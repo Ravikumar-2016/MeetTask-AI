@@ -12,24 +12,22 @@ import { processMeeting } from '../services/api';
 const CLOUDINARY_CLOUD_NAME = 'dmdyvkf2j';
 const CLOUDINARY_UPLOAD_PRESET = 'meeting_uploads';
 
-// File type detection helper
-type FileType = 'image' | 'video' | 'audio' | 'pdf';
+// File type detection helper - Audio/Video only
+type FileType = 'video' | 'audio';
 
 const detectFileType = (file: File): FileType => {
-  if (file.type === 'application/pdf') return 'pdf';
-  if (file.type.startsWith('image/')) return 'image';
   if (file.type.startsWith('video/')) return 'video';
   return 'audio';
 };
 
-// Get Cloudinary upload URL based on file type
-const getCloudinaryUploadUrl = (fileType: FileType): string => {
-  // For PDFs, use /raw/upload; for images use /image/upload; for audio/video use /video/upload
-  let resourceType = 'video';
-  if (fileType === 'image') resourceType = 'image';
-  else if (fileType === 'pdf') resourceType = 'raw';
-  
-  return `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`;
+// Validate file is audio or video
+const isValidFileType = (file: File): boolean => {
+  return file.type.startsWith('audio/') || file.type.startsWith('video/');
+};
+
+// Get Cloudinary upload URL - always use video endpoint for audio/video
+const getCloudinaryUploadUrl = (): string => {
+  return `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`;
 };
 
 // Cloudinary response type
@@ -59,6 +57,14 @@ const UploadPage: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
+      
+      // Validate file type - only audio/video allowed
+      if (!isValidFileType(selectedFile)) {
+        setError('Please select an audio or video file. Images and PDFs are not supported.');
+        return;
+      }
+      
+      setError('');
       setFile(selectedFile);
       if (!title) {
         setTitle(selectedFile.name.split('.')[0]);
@@ -70,19 +76,16 @@ const UploadPage: React.FC = () => {
    * Upload file directly to Cloudinary (unsigned upload)
    * This bypasses the backend to avoid Vercel's file size limits
    * 
-   * @param file - The file to upload
-   * @param fileType - 'image', 'video', or 'audio' to determine Cloudinary resource type
+   * @param file - The file to upload (audio or video only)
    */
-  const uploadToCloudinary = async (file: File, fileType: FileType): Promise<CloudinaryResponse> => {
+  const uploadToCloudinary = async (file: File): Promise<CloudinaryResponse> => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-    // Note: folder is configured in the upload preset on Cloudinary dashboard
-    // If you need to override, add: formData.append('folder', 'meetings');
 
-    // Get correct upload URL based on file type
-    const uploadUrl = getCloudinaryUploadUrl(fileType);
-    console.log(`[Cloudinary] Using ${fileType} upload endpoint:`, uploadUrl);
+    // Always use video endpoint for audio/video files
+    const uploadUrl = getCloudinaryUploadUrl();
+    console.log('[Cloudinary] Using video upload endpoint:', uploadUrl);
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -127,11 +130,9 @@ const UploadPage: React.FC = () => {
    * IMPORTANT: Frontend ONLY sets status to 'uploaded'.
    * Backend orchestrator controls all status updates after this.
    * 
-   * For images and PDFs, OCR is done server-side via Gemini Vision API.
-   * 
    * @param cloudinaryUrl - The secure URL from Cloudinary
    * @param fileName - Original file name
-   * @param fileType - 'image', 'video', 'audio', or 'pdf'
+   * @param fileType - 'video' or 'audio'
    */
   const saveToFirestore = async (
     cloudinaryUrl: string, 
@@ -175,21 +176,19 @@ const UploadPage: React.FC = () => {
       const fileType = detectFileType(file);
       console.log('[Upload] Detected file type:', fileType);
 
-      // Step 2: Upload to Cloudinary with correct resource type
+      // Step 2: Upload to Cloudinary
       setProgressMessage('Uploading file...');
       console.log('[Upload] Starting Cloudinary upload for:', file.name);
-      const cloudinaryResponse = await uploadToCloudinary(file, fileType);
+      const cloudinaryResponse = await uploadToCloudinary(file);
 
       // Step 3: Verify upload was successful
       if (!cloudinaryResponse.secure_url) {
         throw new Error('Cloudinary did not return a secure URL');
       }
 
-      // Step 4: Log file type (OCR is done server-side for images/PDFs)
-      if (fileType === 'image' || fileType === 'pdf') {
-        console.log('[Upload] Image/PDF detected - OCR will be done server-side via Gemini Vision');
-        setProgress(70);
-      }
+      // Step 4: Log upload success
+      console.log('[Upload] Cloudinary upload complete:', cloudinaryResponse.secure_url);
+      setProgress(70);
 
       // Step 5: Verify folder (if preset is configured correctly)
       if (cloudinaryResponse.public_id) {
@@ -211,10 +210,8 @@ const UploadPage: React.FC = () => {
       console.log('[Upload] Complete! Meeting ID:', meetingId);
       setProgress(85);
 
-      // Step 7: Trigger AI Orchestrator for ALL file types
-      // The orchestrator will handle the appropriate processing based on file type
-      // - Audio/Video: AssemblyAI transcription + speaker diarization
-      // - Images/PDFs: Gemini Vision OCR → transcript → needs_mapping
+      // Step 7: Trigger AI Orchestrator
+      // The orchestrator handles: AssemblyAI transcription + speaker diarization
       setProgressMessage('Starting AI analysis...');
       console.log('[Upload] Triggering AI orchestrator...');
       
@@ -286,14 +283,14 @@ const UploadPage: React.FC = () => {
                 className="hidden" 
                 ref={fileInputRef} 
                 onChange={handleFileChange}
-                accept="audio/*,video/*,image/*,.pdf,application/pdf"
+                accept="audio/*,video/*"
               />
               <div className="space-y-2">
                 <span className="material-icons text-slate-400 text-5xl">cloud_upload</span>
                 <div className="text-lg font-bold text-slate-900">
                   {file ? file.name : 'Click to upload or drag and drop'}
                 </div>
-                <p className="text-sm text-slate-500">MP4, MOV, MP3, WAV, JPG, PNG, PDF (Max 500MB)</p>
+                <p className="text-sm text-slate-500">MP4, MOV, WebM, MP3, WAV, M4A (Max 500MB)</p>
               </div>
             </div>
 
