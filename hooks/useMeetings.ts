@@ -228,8 +228,10 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
     case 'transcribing':
     case 'analyzing':
       return 'bg-blue-100 text-blue-700 animate-pulse';
-    case 'uploaded':
+    case 'needs_mapping':
       return 'bg-amber-100 text-amber-700';
+    case 'uploaded':
+      return 'bg-slate-100 text-slate-700';
     case 'error':
       return 'bg-rose-100 text-rose-700';
     default:
@@ -250,6 +252,8 @@ export const getStatusLabel = (status: MeetingStatus): string => {
       return 'ANALYZING...';
     case 'processing':
       return 'PROCESSING';
+    case 'needs_mapping':
+      return 'NEEDS MAPPING';
     case 'uploaded':
       return 'UPLOADED';
     case 'error':

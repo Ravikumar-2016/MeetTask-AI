@@ -8,12 +8,13 @@ import {
   query, 
   where, 
   onSnapshot,
+  getDocs,
   Timestamp 
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping } from '../types';
-import { getStatusBadgeClass } from '../hooks/useMeetings';
+import { Meeting, Task, MeetingStatus, TaskPriority, TaskStatus, SpeakerUtterance, SpeakerMapping, User } from '../types';
+import { getStatusBadgeClass, getStatusLabel } from '../hooks/useMeetings';
 
 /**
  * Format Firestore timestamp to readable date string
@@ -53,6 +54,13 @@ const MeetingDetailsPage: React.FC = () => {
   const [speakerMapping, setSpeakerMapping] = useState<SpeakerMapping>({});
   const [showSpeakerView, setShowSpeakerView] = useState(true);
   const [videoOcrUsed, setVideoOcrUsed] = useState(false);
+  
+  // Speaker mapping UI state (for needs_mapping status)
+  const [speakers, setSpeakers] = useState<string[]>([]);
+  const [usersList, setUsersList] = useState<{ email: string; displayName: string }[]>([]);
+  const [pendingMapping, setPendingMapping] = useState<SpeakerMapping>({});
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [mappingError, setMappingError] = useState<string | null>(null);
 
   // Fetch meeting details
   useEffect(() => {
@@ -217,6 +225,102 @@ const MeetingDetailsPage: React.FC = () => {
 
     return () => unsubscribe();
   }, [id, user?.uid, authLoading]);
+
+  // Load users list and speakers when meeting needs mapping
+  useEffect(() => {
+    if (authLoading || !meeting || meeting.status !== 'needs_mapping') return;
+
+    // Load speakers from meeting or transcript
+    const loadSpeakers = async () => {
+      try {
+        // Get speakers from transcript
+        const transcriptRef = doc(db, 'transcripts', id!);
+        const transcriptSnap = await getDoc(transcriptRef);
+        
+        if (transcriptSnap.exists()) {
+          const data = transcriptSnap.data();
+          if (data.speakers) {
+            setSpeakers(data.speakers);
+            // Initialize pending mapping with empty values
+            const initial: SpeakerMapping = {};
+            data.speakers.forEach((s: string) => { initial[s] = ''; });
+            setPendingMapping(initial);
+          }
+        }
+
+        // Load all users for dropdown
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const users: { email: string; displayName: string }[] = [];
+        usersSnap.forEach((doc) => {
+          const data = doc.data();
+          users.push({
+            email: doc.id,
+            displayName: data.displayName || doc.id.split('@')[0],
+          });
+        });
+        setUsersList(users);
+        console.log('[MeetingDetails] Users loaded for mapping:', users.length);
+      } catch (err) {
+        console.error('[MeetingDetails] Error loading speakers/users:', err);
+      }
+    };
+
+    loadSpeakers();
+  }, [id, meeting?.status, authLoading]);
+
+  // Handle speaker mapping change
+  const handleMappingChange = (speakerId: string, email: string) => {
+    setPendingMapping(prev => ({ ...prev, [speakerId]: email }));
+  };
+
+  // Save speaker mapping and trigger task extraction
+  const saveSpeakerMapping = async () => {
+    // Validate all speakers are mapped
+    const unmapped = speakers.filter(s => !pendingMapping[s]);
+    if (unmapped.length > 0) {
+      setMappingError(`Please map all speakers: ${unmapped.map(s => `Speaker ${s}`).join(', ')}`);
+      return;
+    }
+
+    setSavingMapping(true);
+    setMappingError(null);
+
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch('/api/save-speaker-mapping', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          meetingId: id,
+          speakerMapping: pendingMapping,
+        }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to save mapping');
+      }
+
+      const result = await res.json();
+      console.log('[MeetingDetails] Mapping saved, tasks:', result.tasksExtracted);
+      
+      // Update local state
+      setSpeakerMapping(pendingMapping);
+      
+      // Reload meeting to get updated status
+      window.location.reload();
+    } catch (err: any) {
+      console.error('[MeetingDetails] Error saving mapping:', err);
+      setMappingError(err.message);
+    } finally {
+      setSavingMapping(false);
+    }
+  };
 
   // Loading state
   if (loading) {
@@ -452,7 +556,7 @@ const MeetingDetailsPage: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-lg">Status</h3>
               <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${getStatusBadgeClass(meeting.status)}`}>
-                {meeting.status}
+                {getStatusLabel(meeting.status)}
               </span>
             </div>
             {meeting.status === 'error' && meeting.errorMessage && (
@@ -461,10 +565,97 @@ const MeetingDetailsPage: React.FC = () => {
             {meeting.status === 'processing' && (
               <p className="text-blue-600 text-sm">Your meeting is being processed. Tasks will appear shortly.</p>
             )}
+            {meeting.status === 'transcribing' && (
+              <p className="text-blue-600 text-sm">Audio is being transcribed. This may take a few minutes.</p>
+            )}
+            {meeting.status === 'analyzing' && (
+              <p className="text-purple-600 text-sm">Extracting action items from transcript...</p>
+            )}
             {meeting.status === 'uploaded' && (
               <p className="text-amber-600 text-sm">Meeting uploaded. Waiting for processing to begin.</p>
             )}
           </div>
+
+          {/* Speaker Mapping UI - shown when status is needs_mapping */}
+          {meeting.status === 'needs_mapping' && speakers.length > 0 && (
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-2xl border border-amber-200 shadow-sm">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="material-icons text-amber-600">people_alt</span>
+                <h3 className="font-bold text-lg text-amber-900">Map Speakers</h3>
+              </div>
+              <p className="text-sm text-amber-800 mb-4">
+                We detected {speakers.length} speaker{speakers.length !== 1 ? 's' : ''} in this meeting. 
+                Please identify who each speaker is to assign tasks correctly.
+              </p>
+              
+              <div className="space-y-3">
+                {speakers.map((speakerId) => {
+                  const speakerColors: { [key: string]: string } = {
+                    'A': 'bg-blue-100 text-blue-700 border-blue-200',
+                    'B': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+                    'C': 'bg-purple-100 text-purple-700 border-purple-200',
+                    'D': 'bg-pink-100 text-pink-700 border-pink-200',
+                    'E': 'bg-cyan-100 text-cyan-700 border-cyan-200',
+                  };
+                  const colorClass = speakerColors[speakerId] || 'bg-slate-100 text-slate-700 border-slate-200';
+                  
+                  return (
+                    <div key={speakerId} className="flex items-center gap-3">
+                      <span className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border ${colorClass}`}>
+                        {speakerId}
+                      </span>
+                      <select
+                        value={pendingMapping[speakerId] || ''}
+                        onChange={(e) => handleMappingChange(speakerId, e.target.value)}
+                        className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                      >
+                        <option value="">Select person...</option>
+                        {usersList.map((u) => (
+                          <option key={u.email} value={u.email}>
+                            {u.displayName} ({u.email})
+                          </option>
+                        ))}
+                        {/* Option to add current user if not in list */}
+                        {user?.email && !usersList.find(u => u.email === user.email) && (
+                          <option value={user.email}>
+                            {user.displayName || 'Me'} ({user.email})
+                          </option>
+                        )}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {mappingError && (
+                <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                  <p className="text-sm text-rose-700">{mappingError}</p>
+                </div>
+              )}
+
+              <button
+                onClick={saveSpeakerMapping}
+                disabled={savingMapping}
+                className="mt-4 w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white font-bold rounded-xl transition flex items-center justify-center gap-2"
+              >
+                {savingMapping ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    Extracting Tasks...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-icons text-sm">check</span>
+                    Confirm & Extract Tasks
+                  </>
+                )}
+              </button>
+              
+              <p className="mt-2 text-xs text-amber-700 text-center">
+                After confirming, we'll extract action items and assign them correctly.
+              </p>
+            </div>
+          )}
 
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <h3 className="font-bold text-lg mb-4">Meeting Info</h3>

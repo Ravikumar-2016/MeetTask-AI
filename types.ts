@@ -7,17 +7,23 @@ export interface User {
   emailVerified?: boolean;
 }
 
-export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'analyzing' | 'completed' | 'error';
+export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'analyzing' | 'completed' | 'error';
 export type FileType = 'image' | 'video' | 'audio';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type TaskStatus = 'pending' | 'completed' | 'overdue';
+
+// Speaker mapping: { "A": "email@example.com", "B": "other@example.com" }
+export interface SpeakerMapping {
+  [speakerId: string]: string; // speakerId → user email
+}
 
 export interface Meeting {
   id: string;
   title: string;
   date: string;
   status: MeetingStatus;
-  fileType?: FileType; // NEW: track if image, video, or audio
+  fileType?: FileType;
+  fileUrl?: string;
   audioUrl?: string;
   videoUrl?: string;
   userId: string;
@@ -28,11 +34,11 @@ export interface Meeting {
   updatedAt?: string;
   // Speaker diarization fields
   speakerCount?: number;
-  speakers?: string[];
+  speakers?: string[];           // ["A", "B", "C"] - from diarization
+  speakerMapping?: SpeakerMapping; // Manual mapping: A → email
+  speakerMappingComplete?: boolean;
   summary?: string;
   duration?: number;
-  // Multi-modal analysis
-  videoAnalysisUsed?: boolean;
 }
 
 // Speaker diarization types

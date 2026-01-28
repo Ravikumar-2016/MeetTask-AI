@@ -193,7 +193,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json({ success: true, message: 'Already processed' });
     }
 
-    if (meeting.status === 'transcribing' || meeting.status === 'analyzing') {
+    if (meeting.status === 'transcribing' || meeting.status === 'analyzing' || meeting.status === 'needs_mapping') {
       return response.status(200).json({ success: true, message: 'Already processing' });
     }
 
@@ -210,6 +210,47 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     console.log('📁 File URL:', fileUrl.substring(0, 60) + '...');
     console.log('📁 File type:', meeting.fileType || 'unknown');
+
+    // ============================================
+    // HANDLE IMAGES SEPARATELY (no transcription)
+    // ============================================
+    if (meeting.fileType === 'image') {
+      console.log('🖼️ [Orchestrator] Image file detected - cannot transcribe');
+      
+      // Images don't have audio, so we can't transcribe them
+      // Mark as completed with a note
+      await meetingRef.update({
+        status: 'completed',
+        summary: 'Image uploaded. Images cannot be transcribed - please upload audio or video files for transcription.',
+        speakers: [],
+        speakerCount: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      // Create a basic transcript entry for the image
+      await db.collection('transcripts').doc(meetingId).set({
+        meetingId,
+        userId: user.uid,
+        text: 'Image file - no audio to transcribe.',
+        formattedTranscript: 'This is an image file. To extract tasks and transcribe meetings, please upload audio or video recordings.',
+        summary: 'Image uploaded.',
+        speakers: [],
+        speakerCount: 0,
+        utterances: [],
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      return response.status(200).json({
+        success: true,
+        message: 'Image processed (no transcription available)',
+        meetingId,
+        status: 'completed',
+      });
+    }
+
+    // ============================================
+    // AUDIO/VIDEO: Submit to AssemblyAI
+    // ============================================
 
     // Construct webhook URL
     const host = request.headers.host || 'meet-task-ai.vercel.app';

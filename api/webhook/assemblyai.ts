@@ -3,19 +3,21 @@
  * 
  * POST /api/webhook/assemblyai
  * 
- * This endpoint receives callbacks from AssemblyAI when transcription is complete.
- * The actual processing happens here AFTER AssemblyAI finishes.
+ * NEW FLOW (Human-in-the-loop Speaker Mapping):
+ * 1. User uploads → orchestrator submits to AssemblyAI
+ * 2. AssemblyAI processes audio (1-5 minutes)
+ * 3. AssemblyAI calls THIS webhook when done
+ * 4. We save transcript with speakers ["A", "B", "C"]
+ * 5. Set status to "needs_mapping" ← USER MUST MAP SPEAKERS
+ * 6. User maps Speaker A → "john@email.com", etc. in UI
+ * 7. /api/save-speaker-mapping saves mapping AND extracts tasks
+ * 8. Status → "completed"
  * 
- * Flow:
- * 1. User uploads → orchestrator submits to AssemblyAI with webhook URL
- * 2. Orchestrator returns immediately (status: "transcribing")
- * 3. AssemblyAI processes audio (takes 1-5 minutes)
- * 4. AssemblyAI calls THIS webhook when done
- * 5. We save transcript, extract tasks with LeMUR, update status to "completed"
+ * This is how professional tools (Otter.ai, Fireflies) work!
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { initializeApp, getApps, cert, App } from 'firebase-admin/app';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // ============================================
@@ -24,19 +26,11 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 function initAdmin() {
   if (getApps().length > 0) return getApps()[0];
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-
-  if (!projectId || !clientEmail || !privateKey) {
-    throw new Error('Missing Firebase Admin credentials');
-  }
-
   return initializeApp({
     credential: cert({
-      projectId,
-      clientEmail,
-      privateKey: privateKey.replace(/\\n/g, '\n'),
+      projectId: process.env.FIREBASE_PROJECT_ID!,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, '\n'),
     }),
   });
 }
@@ -57,142 +51,28 @@ interface SpeakerUtterance {
   confidence: number;
 }
 
-interface SpeakerMapping {
-  [speakerId: string]: string;
-}
-
-interface ExtractedTask {
-  title: string;
-  description: string;
-  assignedTo: string;
-  dueDate: string;
-  priority: 'high' | 'medium' | 'low';
-}
-
 // ============================================
-// SPEAKER MAPPING (Fallback - no video OCR)
+// FORMATTED TRANSCRIPT (with Speaker A, B, C labels)
 // ============================================
-function mapSpeakersToNames(utterances: SpeakerUtterance[]): SpeakerMapping {
-  const speakerIds = [...new Set(utterances.map(u => u.speaker))];
-  const mapping: SpeakerMapping = {};
-  
-  // Simple fallback: Speaker A, Speaker B, etc.
-  for (const id of speakerIds) {
-    mapping[id] = `Speaker ${id}`;
-  }
-  
-  return mapping;
-}
-
-// ============================================
-// FORMATTED TRANSCRIPT
-// ============================================
-function generateFormattedTranscript(utterances: SpeakerUtterance[], mapping: SpeakerMapping): string {
+function generateFormattedTranscript(utterances: SpeakerUtterance[]): string {
   let currentSpeaker = '';
   const lines: string[] = [];
   
   for (const u of utterances) {
-    const speakerName = mapping[u.speaker] || `Speaker ${u.speaker}`;
+    const speakerLabel = `Speaker ${u.speaker}`;
     
-    if (speakerName !== currentSpeaker) {
+    if (speakerLabel !== currentSpeaker) {
       const minutes = Math.floor(u.start / 60000);
       const seconds = Math.floor((u.start % 60000) / 1000);
       lines.push('');
-      lines.push(`${speakerName} [${minutes}:${seconds.toString().padStart(2, '0')}]:`);
-      currentSpeaker = speakerName;
+      lines.push(`${speakerLabel} [${minutes}:${seconds.toString().padStart(2, '0')}]:`);
+      currentSpeaker = speakerLabel;
     }
     
     lines.push(u.text);
   }
   
   return lines.join('\n').trim();
-}
-
-// ============================================
-// LEMUR TASK EXTRACTION
-// ============================================
-async function extractTasksWithLemur(
-  transcriptId: string,
-  meetingTitle: string,
-  speakerMapping: SpeakerMapping
-): Promise<{ summary: string; tasks: ExtractedTask[] }> {
-  const apiKey = process.env.ASSEMBLYAI_API_KEY;
-  if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
-
-  const speakerNames = Object.values(speakerMapping).join(', ');
-  
-  console.log('📝 [LeMUR] Extracting summary and tasks...');
-
-  // Get summary
-  let summary = '';
-  try {
-    const summaryRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/summary', {
-      method: 'POST',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        transcript_ids: [transcriptId],
-        context: `Meeting title: "${meetingTitle}". Participants: ${speakerNames}`,
-        answer_format: 'A concise 2-3 sentence summary of the key discussion points and decisions.',
-      }),
-    });
-
-    if (summaryRes.ok) {
-      const summaryData = await summaryRes.json();
-      summary = summaryData.response || '';
-      console.log('✅ [LeMUR] Summary generated');
-    }
-  } catch (e: any) {
-    console.log('⚠️ [LeMUR] Summary failed:', e.message);
-  }
-
-  // Get tasks
-  let tasks: ExtractedTask[] = [];
-  try {
-    const tasksRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
-      method: 'POST',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        transcript_ids: [transcriptId],
-        prompt: `Extract action items from this meeting. For each task, identify:
-1. What needs to be done (title)
-2. Who should do it (use speaker names: ${speakerNames})
-3. Priority (high/medium/low)
-4. Due date if mentioned
-
-Return as JSON array: [{"title": "...", "assignedTo": "...", "priority": "medium", "dueDate": "...", "description": "..."}]
-Only return the JSON array, no other text.`,
-      }),
-    });
-
-    if (tasksRes.ok) {
-      const tasksData = await tasksRes.json();
-      const responseText = tasksData.response || '';
-      
-      // Parse JSON from response
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        tasks = parsed.map((t: any) => ({
-          title: t.title || 'Untitled task',
-          description: t.description || '',
-          assignedTo: t.assignedTo || 'Unassigned',
-          dueDate: t.dueDate || 'No deadline',
-          priority: t.priority || 'medium',
-        }));
-        console.log('✅ [LeMUR] Tasks extracted:', tasks.length);
-      }
-    }
-  } catch (e: any) {
-    console.log('⚠️ [LeMUR] Tasks failed:', e.message);
-  }
-
-  return { summary, tasks };
 }
 
 // ============================================
@@ -255,12 +135,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
     // Handle completed status
     if (status === 'completed') {
       console.log('🔄 Processing completed transcript...');
-      
-      // Update status to analyzing
-      await meetingRef.update({
-        status: 'analyzing',
-        updatedAt: FieldValue.serverTimestamp(),
-      });
 
       // Fetch full transcript from AssemblyAI
       const apiKey = process.env.ASSEMBLYAI_API_KEY;
@@ -283,82 +157,55 @@ export default async function handler(request: VercelRequest, response: VercelRe
         confidence: u.confidence || 0,
       }));
 
+      // Get unique speaker IDs: ["A", "B", "C"]
+      const speakers = [...new Set(utterances.map(u => u.speaker))].sort();
+
       console.log('👥 Utterances:', utterances.length);
-      console.log('👥 Speakers:', [...new Set(utterances.map(u => u.speaker))]);
+      console.log('👥 Speakers found:', speakers);
 
-      // Map speakers (fallback to Speaker A, B, C)
-      const speakerMapping = mapSpeakersToNames(utterances);
-      const formattedTranscript = generateFormattedTranscript(utterances, speakerMapping);
-      const speakers = Object.values(speakerMapping);
+      // Generate formatted transcript with Speaker A/B/C labels
+      const formattedTranscript = generateFormattedTranscript(utterances);
 
-      // Extract summary and tasks with LeMUR
-      const { summary, tasks } = await extractTasksWithLemur(
-        transcript_id,
-        meeting.title || 'Untitled',
-        speakerMapping
-      );
-
-      // Save transcript to Firestore
+      // Save transcript to Firestore (NO tasks yet - wait for mapping)
       await db.collection('transcripts').doc(meetingId).set({
         meetingId,
         userId: meeting.userId,
         text: transcriptData.text || '',
         formattedTranscript,
-        summary,
         confidence: transcriptData.confidence || 0,
         duration: transcriptData.audio_duration || 0,
         wordCount: (transcriptData.text || '').split(/\s+/).length,
         utterances,
-        speakerMapping,
-        speakerCount: speakers.length,
         speakers,
-        videoAnalysisUsed: false,
+        speakerCount: speakers.length,
+        // NO speakerMapping yet - user must map manually
+        speakerMappingComplete: false,
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      console.log('💾 Transcript saved');
+      console.log('💾 Transcript saved (waiting for speaker mapping)');
 
-      // Save tasks
-      if (tasks.length > 0) {
-        const batch = db.batch();
-        for (const task of tasks) {
-          const taskDoc = db.collection('tasks').doc();
-          batch.set(taskDoc, {
-            meetingId,
-            userId: meeting.userId,
-            title: task.title,
-            text: task.title,
-            description: task.description,
-            assignedTo: task.assignedTo,
-            dueDate: task.dueDate,
-            priority: task.priority,
-            completed: false,
-            createdAt: FieldValue.serverTimestamp(),
-          });
-        }
-        await batch.commit();
-        console.log('💾 Tasks saved:', tasks.length);
-      }
-
-      // Update meeting to completed
+      // Update meeting to "needs_mapping" - USER ACTION REQUIRED
       await meetingRef.update({
-        status: 'completed',
-        taskCount: tasks.length,
-        summary: summary.substring(0, 500),
-        duration: transcriptData.audio_duration || 0,
-        speakerCount: speakers.length,
+        status: 'needs_mapping',
         speakers,
+        speakerCount: speakers.length,
+        speakerMappingComplete: false,
+        duration: transcriptData.audio_duration || 0,
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      console.log('\n✅ [Webhook] Processing complete!');
-      console.log('   - Speakers:', speakers.length);
-      console.log('   - Tasks:', tasks.length);
+      console.log('\n✅ [Webhook] Transcript saved!');
+      console.log('   - Speakers:', speakers.join(', '));
+      console.log('   - Status: needs_mapping');
+      console.log('   - User must map speakers before tasks can be extracted');
 
       return response.status(200).json({
         success: true,
         meetingId,
-        taskCount: tasks.length,
+        speakers,
+        status: 'needs_mapping',
+        message: 'Transcript saved. Please map speakers to extract tasks.',
       });
     }
 
