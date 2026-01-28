@@ -3,7 +3,9 @@
  * 
  * POST /api/reset-meeting
  * 
- * Resets a stuck meeting back to "uploaded" status so it can be reprocessed.
+ * Resets a meeting to allow reprocessing.
+ * - targetStatus: 'uploaded' (re-transcribe) or 'needs_mapping' (re-extract tasks)
+ * 
  * Requires authentication and meeting ownership.
  */
 
@@ -48,7 +50,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const decoded = await auth.verifyIdToken(token);
     const userId = decoded.uid;
 
-    const { meetingId } = request.body;
+    const { meetingId, targetStatus = 'uploaded' } = request.body;
     if (!meetingId) {
       return response.status(400).json({ error: 'meetingId required' });
     }
@@ -66,15 +68,49 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(403).json({ error: 'Not authorized' });
     }
 
-    // Reset to uploaded status
-    await meetingRef.update({
-      status: 'uploaded',
-      errorMessage: null,
-      transcriptId: null,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    console.log('[Reset] Meeting', meetingId, 'reset to uploaded');
+    // Handle different reset targets
+    if (targetStatus === 'needs_mapping') {
+      // Reset to needs_mapping - keep transcript, just re-extract tasks
+      
+      // Delete existing tasks for this meeting
+      const tasksSnap = await db.collection('tasks').where('meetingId', '==', meetingId).get();
+      const batch = db.batch();
+      tasksSnap.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      console.log('[Reset] Deleted', tasksSnap.size, 'existing tasks');
+      
+      // Reset mapping flags
+      await meetingRef.update({
+        status: 'needs_mapping',
+        speakerMapping: null,
+        speakerMappingComplete: false,
+        taskCount: 0,
+        errorMessage: null,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      
+      // Also reset transcript mapping flags
+      await db.collection('transcripts').doc(meetingId).update({
+        speakerMapping: null,
+        speakerMappingComplete: false,
+        updatedAt: FieldValue.serverTimestamp(),
+      }).catch(() => {}); // Ignore if transcript doesn't exist
+      
+      console.log('[Reset] Meeting', meetingId, 'reset to needs_mapping');
+    } else {
+      // Reset to uploaded status (full re-transcription)
+      await meetingRef.update({
+        status: 'uploaded',
+        errorMessage: null,
+        transcriptId: null,
+        speakerMapping: null,
+        speakerMappingComplete: false,
+        taskCount: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      
+      console.log('[Reset] Meeting', meetingId, 'reset to uploaded');
+    }
 
     return response.status(200).json({
       success: true,

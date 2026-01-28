@@ -61,6 +61,42 @@ const MeetingDetailsPage: React.FC = () => {
   const [pendingMapping, setPendingMapping] = useState<SpeakerMapping>({});
   const [savingMapping, setSavingMapping] = useState(false);
   const [mappingError, setMappingError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+
+  // Reset meeting to re-extract tasks
+  const resetToMapping = async () => {
+    if (!id) return;
+    setResetting(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Not authenticated');
+      
+      const res = await fetch('/api/reset-meeting', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          meetingId: id,
+          targetStatus: 'needs_mapping',
+        }),
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to reset meeting');
+      }
+      
+      // Reload the page to show mapping UI
+      window.location.reload();
+    } catch (err: any) {
+      console.error('Reset error:', err);
+      setMappingError(err.message);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   // Fetch meeting details
   useEffect(() => {
@@ -468,11 +504,33 @@ const MeetingDetailsPage: React.FC = () => {
                 <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center">
                   <span className="material-icons text-slate-300 text-5xl mb-4">assignment</span>
                   <h3 className="font-bold text-slate-900 mb-2">No tasks yet</h3>
-                  <p className="text-slate-500">
+                  <p className="text-slate-500 mb-4">
                     {meeting.status === 'completed' 
                       ? 'No action items were extracted from this meeting'
                       : 'Tasks will appear here after processing completes'}
                   </p>
+                  {meeting.status === 'completed' && (
+                    <button
+                      onClick={resetToMapping}
+                      disabled={resetting}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-medium rounded-lg transition flex items-center gap-2 mx-auto"
+                    >
+                      {resetting ? (
+                        <>
+                          <span className="animate-spin">⏳</span>
+                          Resetting...
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-icons text-sm">refresh</span>
+                          Re-map Speakers & Extract Tasks
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {mappingError && (
+                    <p className="mt-2 text-sm text-rose-600">{mappingError}</p>
+                  )}
                 </div>
               ) : (
                 tasks.map((task) => (

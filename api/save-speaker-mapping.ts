@@ -137,13 +137,24 @@ async function extractTasksWithLeMUR(
 ): Promise<any[]> {
   const apiKey = process.env.ASSEMBLYAI_API_KEY;
   
+  if (!apiKey) {
+    console.error('❌ ASSEMBLYAI_API_KEY not configured');
+    return [];
+  }
+  
+  console.log('🔑 LeMUR: Using transcript ID:', transcriptId);
+  console.log('🗺️ LeMUR: Speaker mapping:', speakerMapping);
+  
   // Build speaker info for prompt using display names
   const speakerInfo = Object.entries(speakerMapping)
+    .filter(([_, mtaiId]) => mtaiId) // Filter out skipped speakers
     .map(([id, mtaiId]) => {
       const name = mtaiIdToName.get(mtaiId) || mtaiId;
       return `Speaker ${id} = ${name} (${mtaiId})`;
     })
     .join('\n');
+
+  console.log('👥 LeMUR: Speaker info for prompt:\n', speakerInfo);
 
   const prompt = `Analyze this meeting transcript and extract ALL action items and tasks.
 
@@ -177,10 +188,12 @@ RULES:
 Return ONLY valid JSON array, no markdown, no explanation.`;
 
   try {
+    console.log('📤 LeMUR: Sending request to AssemblyAI...');
+    
     const lemurRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
       method: 'POST',
       headers: {
-        'Authorization': apiKey!,
+        'Authorization': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -190,14 +203,16 @@ Return ONLY valid JSON array, no markdown, no explanation.`;
       }),
     });
 
+    console.log('📥 LeMUR: Response status:', lemurRes.status);
+
     if (!lemurRes.ok) {
       const errorText = await lemurRes.text();
-      console.error('LeMUR error:', errorText);
+      console.error('❌ LeMUR API error:', lemurRes.status, errorText);
       return [];
     }
 
     const lemurData = await lemurRes.json();
-    console.log('LeMUR response:', lemurData.response?.substring(0, 200));
+    console.log('📄 LeMUR raw response (first 500 chars):', lemurData.response?.substring(0, 500));
 
     // Parse JSON from response
     let tasks: any[] = [];
@@ -207,14 +222,19 @@ Return ONLY valid JSON array, no markdown, no explanation.`;
       const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         tasks = JSON.parse(jsonMatch[0]);
+        console.log('✅ LeMUR: Parsed', tasks.length, 'tasks from response');
+      } else {
+        console.warn('⚠️ LeMUR: No JSON array found in response');
+        console.log('📄 Full response:', responseText);
       }
-    } catch (parseError) {
-      console.error('Failed to parse LeMUR response:', parseError);
+    } catch (parseError: any) {
+      console.error('❌ Failed to parse LeMUR response:', parseError.message);
+      console.log('📄 Raw response:', lemurData.response);
     }
 
     return Array.isArray(tasks) ? tasks : [];
-  } catch (error) {
-    console.error('LeMUR extraction failed:', error);
+  } catch (error: any) {
+    console.error('❌ LeMUR extraction failed:', error.message);
     return [];
   }
 }
@@ -345,15 +365,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     // Extract tasks using LeMUR
     console.log('🤖 Extracting tasks with LeMUR...');
+    console.log('📋 Meeting transcriptId:', meeting.transcriptId);
     
     let extractedTasks: any[] = [];
     
     if (meeting.transcriptId) {
-      extractedTasks = await extractTasksWithLeMUR(
-        meeting.transcriptId,
-        speakerMapping,
-        mtaiIdToName
-      );
+      try {
+        extractedTasks = await extractTasksWithLeMUR(
+          meeting.transcriptId,
+          speakerMapping,
+          mtaiIdToName
+        );
+        console.log('✅ LeMUR extraction completed, tasks:', extractedTasks.length);
+      } catch (lemurError: any) {
+        console.error('❌ LeMUR extraction failed:', lemurError.message);
+        // Continue with empty tasks - don't fail the whole operation
+      }
+    } else {
+      console.warn('⚠️ No transcriptId found on meeting - cannot extract tasks');
     }
 
     console.log('📋 Tasks extracted:', extractedTasks.length);
@@ -469,12 +498,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     return response.status(200).json({
+      success: true,
       tasks: savedTasks,
+      tasksExtracted: savedTasks.length,
       status: 'completed',
     });
 
   } catch (error: any) {
     console.error('❌ Error:', error.message);
+    console.error('❌ Stack:', error.stack);
     return response.status(500).json({ error: error.message });
   }
 }
