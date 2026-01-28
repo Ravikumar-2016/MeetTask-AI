@@ -13,12 +13,22 @@
  *    - Name mentions in transcript
  */
 
-import { SpeakerUtterance, SpeakerMapping } from './types';
 import { DetectedSpeaker } from './videoAnalyzer';
 
 // ============================================
 // TYPES
 // ============================================
+
+export interface SpeakerUtterance {
+  speaker: string;
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface SpeakerMapping {
+  [speakerId: string]: string;
+}
 
 export interface SpeakerProfile {
   speakerId: string;           // "A", "B", "C"

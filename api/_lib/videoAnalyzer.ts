@@ -354,9 +354,9 @@ export async function extractSpeakersFromTranscript(
   
   // Look for detected entities of type "person_name"
   const entities = data.entities || [];
-  const personNames = entities
+  const personNames: string[] = entities
     .filter((e: any) => e.entity_type === 'person_name')
-    .map((e: any) => e.text);
+    .map((e: any) => e.text as string);
   
   return [...new Set(personNames)];
 }
