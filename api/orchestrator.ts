@@ -106,7 +106,7 @@ type FileType = 'audio' | 'video' | 'image';
 // ASSEMBLYAI TRANSCRIPTION
 // ============================================
 
-async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: string; confidence: number; duration: number }> {
+async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: string; confidence: number; duration: number; transcriptId: string }> {
   const apiKey = process.env.ASSEMBLYAI_API_KEY;
   if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
 
@@ -159,6 +159,7 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
         text: pollData.text || '',
         confidence: pollData.confidence || 0,
         duration: pollData.audio_duration || 0,
+        transcriptId: transcriptId,
       };
     }
 
@@ -173,109 +174,111 @@ async function transcribeWithAssemblyAI(mediaUrl: string): Promise<{ text: strin
 }
 
 // ============================================
-// IMAGE TEXT EXTRACTION (GPT-4 Vision)
+// ASSEMBLYAI LEMUR - Summary & Task Extraction
 // ============================================
 
-async function extractTextFromImage(imageUrl: string): Promise<{ text: string; wordCount: number }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+async function extractSummaryWithLemur(transcriptId: string, meetingTitle: string): Promise<{ summary: string; tasks: ExtractedTask[] }> {
+  const apiKey = process.env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY not set');
 
-  console.log('🖼️ [GPT-4] Extracting text from image...');
+  console.log('🤖 [AssemblyAI LeMUR] Extracting summary & tasks...');
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  // Use LeMUR for summary
+  const summaryRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/summary', {
     method: 'POST',
     headers: {
+      'Authorization': apiKey,
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Extract all text from this image. Also describe any diagrams, action items, or tasks visible.' },
-          { type: 'image_url', image_url: { url: imageUrl } }
-        ]
-      }],
-      max_tokens: 4096,
+      transcript_ids: [transcriptId],
+      context: `Meeting title: ${meetingTitle}`,
+      answer_format: 'A concise 2-4 sentence summary of the main discussion points.',
     }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`GPT-4 Vision error: ${res.status} - ${errText}`);
+  let summary = 'Meeting transcript processed.';
+  if (summaryRes.ok) {
+    const summaryData = await summaryRes.json();
+    summary = summaryData.response || summary;
+    console.log('✅ [LeMUR] Summary generated');
+  } else {
+    console.log('⚠️ [LeMUR] Summary failed, using default');
   }
 
-  const result = await res.json();
-  const text = result.choices?.[0]?.message?.content || '';
-  
-  console.log('✅ [GPT-4] Image extraction done:', text.length, 'chars');
+  // Use LeMUR for task extraction
+  const tasksRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
+    method: 'POST',
+    headers: {
+      'Authorization': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      transcript_ids: [transcriptId],
+      prompt: `Extract all action items and tasks from this meeting transcript.
+For each task, provide:
+- title: A clear, actionable task title
+- description: Brief context
+- assignedTo: Person responsible (or "Unassigned" if unclear)
+- dueDate: Deadline if mentioned (format: YYYY-MM-DD) or "No deadline"
+- priority: high, medium, or low
+
+Return ONLY a JSON array of tasks. If no tasks found, return empty array [].
+Example format:
+[{"title":"Review proposal","description":"Review Q1 budget proposal","assignedTo":"John","dueDate":"2026-02-01","priority":"high"}]`,
+    }),
+  });
+
+  let tasks: ExtractedTask[] = [];
+  if (tasksRes.ok) {
+    const tasksData = await tasksRes.json();
+    const responseText = tasksData.response || '[]';
+    console.log('📋 [LeMUR] Tasks response:', responseText.substring(0, 200));
+    
+    try {
+      // Try to extract JSON array from response
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        tasks = JSON.parse(jsonMatch[0]);
+        console.log('✅ [LeMUR] Tasks extracted:', tasks.length);
+      }
+    } catch (e) {
+      console.log('⚠️ [LeMUR] Could not parse tasks, continuing without tasks');
+    }
+  } else {
+    console.log('⚠️ [LeMUR] Tasks extraction failed');
+  }
+
+  return { summary, tasks };
+}
+
+// ============================================
+// IMAGE TEXT EXTRACTION (Simple - no OpenAI needed)
+// For images, we'll create a simple text description
+// ============================================
+
+async function extractTextFromImage(imageUrl: string): Promise<{ text: string; wordCount: number }> {
+  console.log('🖼️ [Image] Processing image...');
+  // For images without OpenAI, return a placeholder
+  // The user can view the image directly in the meeting details
+  const text = `Image uploaded: ${imageUrl.split('/').pop() || 'meeting-image'}. Please view the image in the meeting details for visual content.`;
   return { text, wordCount: text.split(/\s+/).length };
 }
 
 // ============================================
-// SUMMARY & TASK EXTRACTION (GPT-4o-mini)
+// SIMPLE SUMMARY EXTRACTION (No external API)
+// Used as fallback or for images
 // ============================================
 
-async function extractSummaryAndTasks(transcript: string, meetingTitle: string): Promise<{ summary: string; tasks: ExtractedTask[] }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
-
-  console.log('🤖 [GPT-4] Extracting summary & tasks...');
-
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `Extract summary and tasks from meeting content. Return JSON only:
-{
-  "summary": "2-4 sentence summary",
-  "tasks": [
-    {
-      "title": "task title",
-      "description": "brief description",
-      "assignedTo": "person name or Unassigned",
-      "dueDate": "YYYY-MM-DD or No deadline",
-      "priority": "high|medium|low"
-    }
-  ]
-}
-If no tasks found, return empty tasks array.`
-        },
-        { role: 'user', content: `Meeting: ${meetingTitle}\n\nTranscript:\n${transcript.substring(0, 12000)}` }
-      ],
-      temperature: 0.3,
-      max_tokens: 2000,
-      response_format: { type: 'json_object' },
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`GPT-4 extraction error: ${res.status} - ${errText}`);
-  }
-
-  const result = await res.json();
-  const content = result.choices?.[0]?.message?.content;
+function extractSimpleSummaryAndTasks(transcript: string, meetingTitle: string): { summary: string; tasks: ExtractedTask[] } {
+  console.log('📝 [Simple] Generating basic summary...');
   
-  try {
-    const parsed = JSON.parse(content || '{"summary":"","tasks":[]}');
-    console.log('✅ [GPT-4] Extraction done. Tasks:', parsed.tasks?.length || 0);
-    return {
-      summary: parsed.summary || 'No summary available.',
-      tasks: parsed.tasks || [],
-    };
-  } catch {
-    console.error('Failed to parse GPT response');
-    return { summary: 'Processing complete.', tasks: [] };
-  }
+  const wordCount = transcript.split(/\s+/).length;
+  const preview = transcript.substring(0, 200).trim();
+  
+  const summary = `Meeting "${meetingTitle}" - ${wordCount} words transcribed. ${preview}...`;
+  
+  return { summary, tasks: [] };
 }
 
 // ============================================
@@ -289,32 +292,47 @@ async function runPipeline(fileUrl: string, fileType: FileType, meetingTitle: st
   let transcript = '';
   let confidence = 0;
   let duration = 0;
+  let summary = '';
+  let tasks: ExtractedTask[] = [];
 
   // Step 1: Get transcript based on file type
   if (fileType === 'image') {
     const result = await extractTextFromImage(fileUrl);
     transcript = result.text;
+    // For images, use simple summary (no LeMUR)
+    const extraction = extractSimpleSummaryAndTasks(transcript, meetingTitle);
+    summary = extraction.summary;
+    tasks = extraction.tasks;
   } else {
     // Audio or Video - use AssemblyAI
     const result = await transcribeWithAssemblyAI(fileUrl);
     transcript = result.text;
     confidence = result.confidence;
     duration = result.duration;
+    
+    // Use AssemblyAI LeMUR for summary & tasks
+    if (result.transcriptId && transcript.length > 10) {
+      const extraction = await extractSummaryWithLemur(result.transcriptId, meetingTitle);
+      summary = extraction.summary;
+      tasks = extraction.tasks;
+    } else {
+      // Fallback to simple extraction
+      const extraction = extractSimpleSummaryAndTasks(transcript, meetingTitle);
+      summary = extraction.summary;
+      tasks = extraction.tasks;
+    }
   }
 
   if (!transcript || transcript.trim().length === 0) {
     throw new Error('No transcript could be generated');
   }
 
-  // Step 2: Extract summary and tasks
-  const extraction = await extractSummaryAndTasks(transcript, meetingTitle);
-
   return {
     transcript,
     confidence,
     duration,
-    summary: extraction.summary,
-    tasks: extraction.tasks,
+    summary,
+    tasks,
   };
 }
 
@@ -344,12 +362,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(500).json({
         success: false,
         error: 'ASSEMBLYAI_API_KEY not configured',
-      });
-    }
-    if (!process.env.OPENAI_API_KEY) {
-      return response.status(500).json({
-        success: false,
-        error: 'OPENAI_API_KEY not configured',
       });
     }
 
