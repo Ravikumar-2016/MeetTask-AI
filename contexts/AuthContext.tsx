@@ -33,6 +33,7 @@ import {
   doc, 
   setDoc, 
   getDoc, 
+  deleteDoc,
   collection, 
   query, 
   where, 
@@ -140,22 +141,54 @@ const generateMtaiId = async (): Promise<string> => {
 
 /**
  * Find existing user by email (for deduplication)
- * Queries users collection where email matches
+ * 
+ * Checks TWO places for backward compatibility:
+ * 1. Query users collection where email field matches (new system: users/{mtaiId})
+ * 2. Check if document exists with email as ID (old system: users/{email})
+ * 
+ * If old document found, it will be migrated during saveUserToFirestore
  */
-const findUserByEmail = async (email: string): Promise<{ mtaiId: string; data: FirestoreUser } | null> => {
+const findUserByEmail = async (email: string): Promise<{ mtaiId: string; data: FirestoreUser; needsMigration?: boolean } | null> => {
   try {
+    // 1. First, check NEW system: query by email field
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('email', '==', email));
     const snapshot = await getDocs(q);
     
     if (!snapshot.empty) {
-      const doc = snapshot.docs[0];
+      const docSnap = snapshot.docs[0];
+      console.log('✅ [Auth] Found user in new system:', docSnap.id);
       return {
-        mtaiId: doc.id,
-        data: doc.data() as FirestoreUser
+        mtaiId: docSnap.id,
+        data: docSnap.data() as FirestoreUser
       };
     }
     
+    // 2. Check OLD system: document ID is the email
+    const oldUserRef = doc(db, 'users', email);
+    const oldUserSnap = await getDoc(oldUserRef);
+    
+    if (oldUserSnap.exists()) {
+      const oldData = oldUserSnap.data();
+      console.log('📦 [Auth] Found user in OLD system (email as doc ID), needs migration');
+      
+      // Return old data with migration flag
+      return {
+        mtaiId: email, // Temporary - will be replaced during migration
+        data: {
+          uid: oldData.uid || '',
+          mtaiId: oldData.mtaiId || '', // May not exist in old docs
+          email: email,
+          displayName: oldData.displayName || email.split('@')[0],
+          photoURL: oldData.photoURL || null,
+          authProviders: oldData.authProviders || ['google'],
+          createdAt: oldData.createdAt
+        },
+        needsMigration: true
+      };
+    }
+    
+    console.log('🔍 [Auth] No existing user found for:', email);
     return null;
   } catch (error) {
     console.error('❌ [Auth] Error finding user by email:', error);
@@ -195,8 +228,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * 
    * LOGIC:
    * 1. Check if user exists by email (deduplication)
-   * 2. If exists: merge auth providers, update UID
-   * 3. If new: generate MTAI ID, create document at users/{mtaiId}
+   * 2. If exists in OLD system (email as doc ID): MIGRATE to new system
+   * 3. If exists in NEW system: merge auth providers, update UID
+   * 4. If new: generate MTAI ID, create document at users/{mtaiId}
    */
   const saveUserToFirestore = useCallback(async (
     firebaseUser: FirebaseUser,
@@ -213,7 +247,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const existingUser = await findUserByEmail(email);
 
     if (existingUser) {
-      // EXISTING USER - merge auth providers
+      // Check if migration is needed (old system: email as doc ID)
+      if (existingUser.needsMigration) {
+        console.log('🔄 [Auth] Migrating user from old system...');
+        
+        // Generate new MTAI ID
+        const mtaiId = await generateMtaiId();
+        
+        const existingProviders = existingUser.data.authProviders || [];
+        const updatedProviders = existingProviders.includes(provider)
+          ? existingProviders
+          : [...existingProviders, provider];
+        
+        // Create new document with MTAI ID
+        const newUserData: FirestoreUser = {
+          uid: firebaseUser.uid,
+          mtaiId: mtaiId,
+          email: email,
+          displayName: firebaseUser.displayName || existingUser.data.displayName || email.split('@')[0],
+          photoURL: firebaseUser.photoURL || existingUser.data.photoURL || null,
+          authProviders: updatedProviders,
+          createdAt: existingUser.data.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp()
+        };
+        
+        const newUserRef = doc(db, 'users', mtaiId);
+        await setDoc(newUserRef, newUserData);
+        
+        // Delete old document (email as ID)
+        const oldUserRef = doc(db, 'users', email);
+        try {
+          await deleteDoc(oldUserRef);
+          console.log('🗑️ [Auth] Deleted old document:', email);
+        } catch (deleteError) {
+          console.warn('⚠️ [Auth] Could not delete old document:', deleteError);
+        }
+        
+        console.log('✅ [Auth] User migrated to:', mtaiId);
+        return mtaiId;
+      }
+      
+      // EXISTING USER in NEW system - merge auth providers
       console.log('👤 [Auth] Existing user found:', existingUser.mtaiId);
       
       const existingProviders = existingUser.data.authProviders || [];
