@@ -128,115 +128,178 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// LeMUR TASK EXTRACTION (Enhanced)
+// TASK EXTRACTION WITH OPENAI (Primary)
 // ============================================
-async function extractTasksWithLeMUR(
-  transcriptId: string,
+async function extractTasksWithOpenAI(
+  transcriptText: string,
   speakerMapping: SpeakerMapping,
   mtaiIdToName: Map<string, string>
 ): Promise<any[]> {
-  const apiKey = process.env.ASSEMBLYAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   
   if (!apiKey) {
-    console.error('❌ ASSEMBLYAI_API_KEY not configured');
+    console.error('❌ OPENAI_API_KEY not configured');
     return [];
   }
   
-  console.log('🔑 LeMUR: Using transcript ID:', transcriptId);
-  console.log('🗺️ LeMUR: Speaker mapping:', speakerMapping);
+  console.log('🤖 OpenAI: Extracting tasks...');
+  console.log('🗺️ OpenAI: Speaker mapping:', speakerMapping);
   
-  // Build speaker info for prompt using display names
+  // Build speaker info for prompt
   const speakerInfo = Object.entries(speakerMapping)
-    .filter(([_, mtaiId]) => mtaiId) // Filter out skipped speakers
+    .filter(([_, mtaiId]) => mtaiId)
     .map(([id, mtaiId]) => {
       const name = mtaiIdToName.get(mtaiId) || mtaiId;
       return `Speaker ${id} = ${name} (${mtaiId})`;
     })
     .join('\n');
 
-  console.log('👥 LeMUR: Speaker info for prompt:\n', speakerInfo);
+  console.log('👥 OpenAI: Speaker info:\n', speakerInfo);
 
   const prompt = `Analyze this meeting transcript and extract ALL action items and tasks.
 
 SPEAKER MAPPING:
 ${speakerInfo}
 
-For each task found, return:
-1. title: Brief, actionable task title (max 80 chars)
-2. description: Clear description of what needs to be done
-3. assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person responsible
-4. speakerId: The speaker ID (A, B, C) who is assigned
-5. priority: "critical", "high", "medium", or "low"
-6. dueDate: If mentioned (YYYY-MM-DD format), else null
-7. sourceSentence: The exact quote from transcript that mentions this task
+TRANSCRIPT:
+${transcriptText.substring(0, 12000)}
+
+For each task found, return a JSON object with:
+- title: Brief, actionable task title (max 80 chars)
+- description: Clear description of what needs to be done
+- assignedToMtaiId: The MTAI ID (e.g., "MTAI001") of the person responsible
+- speakerId: The speaker ID (A, B, C) who is assigned
+- priority: "critical", "high", "medium", or "low"
+- dueDate: If mentioned (YYYY-MM-DD format), else null
+- sourceSentence: The exact quote from transcript that mentions this task
 
 PRIORITY GUIDELINES:
-- critical: Urgent, blocking other work, mentioned as priority
+- critical: Urgent, blocking other work
 - high: Important deadline, significant impact
-- medium: Normal priority, standard work
-- low: Nice-to-have, can be delayed
-
-Return a JSON array of tasks. If no clear tasks found, return [].
+- medium: Normal priority
+- low: Nice-to-have
 
 RULES:
 - Only extract CLEAR action items (explicit commitments)
 - "I'll do X" → assign to that speaker
-- "Can you do X?" or "Please do X" → assign to person being asked
-- When in doubt about assignee, use the speaker who accepted the task
+- "Can you do X?" → assign to person being asked
 - Never invent tasks that weren't discussed
 
-Return ONLY valid JSON array, no markdown, no explanation.`;
+Return ONLY a valid JSON array of tasks. No markdown, no explanation. If no tasks found, return [].`;
 
   try {
-    console.log('📤 LeMUR: Sending request to AssemblyAI...');
-    
-    const lemurRes = await fetch('https://api.assemblyai.com/lemur/v3/generate/task', {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': apiKey,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        transcript_ids: [transcriptId],
-        prompt,
-        final_model: 'anthropic/claude-3-5-sonnet',
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a meeting assistant that extracts action items. Return only valid JSON arrays.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000,
       }),
     });
 
-    console.log('📥 LeMUR: Response status:', lemurRes.status);
+    console.log('📥 OpenAI: Response status:', res.status);
 
-    if (!lemurRes.ok) {
-      const errorText = await lemurRes.text();
-      console.error('❌ LeMUR API error:', lemurRes.status, errorText);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error('❌ OpenAI API error:', res.status, errorText);
       return [];
     }
 
-    const lemurData = await lemurRes.json();
-    console.log('📄 LeMUR raw response (first 500 chars):', lemurData.response?.substring(0, 500));
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    console.log('📄 OpenAI response (first 500 chars):', content.substring(0, 500));
 
     // Parse JSON from response
     let tasks: any[] = [];
     try {
-      const responseText = lemurData.response || '';
-      // Try to find JSON array in response
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         tasks = JSON.parse(jsonMatch[0]);
-        console.log('✅ LeMUR: Parsed', tasks.length, 'tasks from response');
+        console.log('✅ OpenAI: Parsed', tasks.length, 'tasks');
       } else {
-        console.warn('⚠️ LeMUR: No JSON array found in response');
-        console.log('📄 Full response:', responseText);
+        console.warn('⚠️ OpenAI: No JSON array found');
       }
     } catch (parseError: any) {
-      console.error('❌ Failed to parse LeMUR response:', parseError.message);
-      console.log('📄 Raw response:', lemurData.response);
+      console.error('❌ Failed to parse OpenAI response:', parseError.message);
     }
 
     return Array.isArray(tasks) ? tasks : [];
   } catch (error: any) {
-    console.error('❌ LeMUR extraction failed:', error.message);
+    console.error('❌ OpenAI extraction failed:', error.message);
     return [];
   }
+}
+
+// ============================================
+// FALLBACK: Basic keyword extraction
+// ============================================
+function extractTasksBasic(
+  transcriptText: string,
+  speakerMapping: SpeakerMapping,
+  mtaiIdToName: Map<string, string>
+): any[] {
+  console.log('🔧 Using basic keyword extraction...');
+  
+  const tasks: any[] = [];
+  const lines = transcriptText.split('\n');
+  
+  // Keywords that indicate action items
+  const actionKeywords = [
+    /I['']ll\s+(.+)/i,
+    /I\s+will\s+(.+)/i,
+    /going\s+to\s+(.+)/i,
+    /need\s+to\s+(.+)/i,
+    /should\s+(.+)/i,
+    /can\s+you\s+(.+)/i,
+    /please\s+(.+)/i,
+    /action\s+item[:\s]+(.+)/i,
+    /todo[:\s]+(.+)/i,
+    /task[:\s]+(.+)/i,
+  ];
+
+  let currentSpeaker = 'A';
+  
+  for (const line of lines) {
+    // Track current speaker
+    const speakerMatch = line.match(/Speaker\s+([A-Z])/i);
+    if (speakerMatch) {
+      currentSpeaker = speakerMatch[1];
+    }
+    
+    // Check for action keywords
+    for (const pattern of actionKeywords) {
+      const match = line.match(pattern);
+      if (match && match[1] && match[1].length > 10) {
+        const mtaiId = speakerMapping[currentSpeaker] || Object.values(speakerMapping)[0] || '';
+        tasks.push({
+          title: match[1].substring(0, 80).trim(),
+          description: line.trim(),
+          assignedToMtaiId: mtaiId,
+          speakerId: currentSpeaker,
+          priority: 'medium',
+          dueDate: null,
+          sourceSentence: line.trim().substring(0, 200),
+        });
+        break; // Only one task per line
+      }
+    }
+  }
+  
+  // Deduplicate by title similarity
+  const uniqueTasks = tasks.filter((task, index, self) =>
+    index === self.findIndex(t => t.title.toLowerCase() === task.title.toLowerCase())
+  ).slice(0, 10); // Max 10 tasks from basic extraction
+  
+  console.log('🔧 Basic extraction found:', uniqueTasks.length, 'tasks');
+  return uniqueTasks;
 }
 
 // ============================================
@@ -363,26 +426,39 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('👥 Users found:', usersMap.size);
     console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
 
-    // Extract tasks using LeMUR
-    console.log('🤖 Extracting tasks with LeMUR...');
-    console.log('📋 Meeting transcriptId:', meeting.transcriptId);
+    // Extract tasks using AI
+    console.log('🤖 Extracting tasks...');
     
     let extractedTasks: any[] = [];
     
-    if (meeting.transcriptId) {
-      try {
-        extractedTasks = await extractTasksWithLeMUR(
-          meeting.transcriptId,
-          speakerMapping,
-          mtaiIdToName
-        );
-        console.log('✅ LeMUR extraction completed, tasks:', extractedTasks.length);
-      } catch (lemurError: any) {
-        console.error('❌ LeMUR extraction failed:', lemurError.message);
-        // Continue with empty tasks - don't fail the whole operation
+    // Get transcript text for extraction
+    const transcriptText = transcript.formattedTranscript || transcript.text || '';
+    console.log('📄 Transcript length:', transcriptText.length, 'chars');
+    
+    if (transcriptText.length > 50) {
+      // Try OpenAI first (primary method)
+      if (process.env.OPENAI_API_KEY) {
+        try {
+          extractedTasks = await extractTasksWithOpenAI(
+            transcriptText,
+            speakerMapping,
+            mtaiIdToName
+          );
+          console.log('✅ OpenAI extraction completed, tasks:', extractedTasks.length);
+        } catch (openaiError: any) {
+          console.error('❌ OpenAI extraction failed:', openaiError.message);
+        }
+      } else {
+        console.warn('⚠️ OPENAI_API_KEY not configured');
+      }
+      
+      // Fallback to basic extraction if AI failed
+      if (extractedTasks.length === 0) {
+        console.log('🔧 Falling back to basic keyword extraction...');
+        extractedTasks = extractTasksBasic(transcriptText, speakerMapping, mtaiIdToName);
       }
     } else {
-      console.warn('⚠️ No transcriptId found on meeting - cannot extract tasks');
+      console.warn('⚠️ Transcript too short for task extraction');
     }
 
     console.log('📋 Tasks extracted:', extractedTasks.length);
