@@ -161,21 +161,24 @@ FORMAT YOUR RESPONSE AS JSON:
 
 Return ONLY valid JSON, no other text.`;
 
-  const imageData = {
-    inlineData: {
-      mimeType,
-      data: base64Data,
-    },
-  };
+  // Try multiple model endpoints
+  const modelsToTry = [
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro-latest',
+    'gemini-pro-vision'
+  ];
 
-  // Use REST API directly for better reliability
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-  
   const requestBody = {
     contents: [{
       parts: [
         { text: prompt },
-        { inline_data: { mime_type: mimeType, data: base64Data } }
+        { 
+          inlineData: { 
+            mimeType: mimeType, 
+            data: base64Data 
+          } 
+        }
       ]
     }],
     generationConfig: {
@@ -184,46 +187,59 @@ Return ONLY valid JSON, no other text.`;
     }
   };
 
-  console.log('🔮 [Gemini] Calling REST API...');
+  let lastError: string = '';
   
-  const apiResponse = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  });
+  for (const modelName of modelsToTry) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      console.log(`🔮 [Gemini] Trying model: ${modelName}`);
+      
+      const apiResponse = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
 
-  if (!apiResponse.ok) {
-    const errorText = await apiResponse.text();
-    console.error('❌ [Gemini] API error:', apiResponse.status, errorText);
-    throw new Error(`Gemini API error: ${apiResponse.status}`);
+      if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        console.log(`⚠️ [Gemini] Model ${modelName} failed: ${apiResponse.status}`);
+        lastError = errorText;
+        continue; // Try next model
+      }
+
+      const result = await apiResponse.json();
+      const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      
+      console.log(`✅ [Gemini] Success with ${modelName}`);
+      console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
+
+      // Try to parse JSON response
+      try {
+        let cleanJson = responseText
+          .replace(/```json\n?/g, '')
+          .replace(/```\n?/g, '')
+          .trim();
+        
+        const parsed = JSON.parse(cleanJson);
+        return {
+          summary: parsed.summary || 'Image analyzed successfully.',
+          keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
+        };
+      } catch (parseError) {
+        console.log('⚠️ [Gemini] JSON parse failed, using raw text');
+        return {
+          summary: responseText.substring(0, 500) || 'Image content extracted.',
+          keyPoints: []
+        };
+      }
+    } catch (fetchError: any) {
+      console.log(`⚠️ [Gemini] Fetch error for ${modelName}:`, fetchError.message);
+      lastError = fetchError.message;
+    }
   }
 
-  const result = await apiResponse.json();
-  const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  
-  console.log('📝 [Gemini] Raw response:', responseText.substring(0, 200));
-
-  // Try to parse JSON response
-  try {
-    // Clean up response - remove markdown code blocks if present
-    let cleanJson = responseText
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    
-    const parsed = JSON.parse(cleanJson);
-    return {
-      summary: parsed.summary || 'Image analyzed successfully.',
-      keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : []
-    };
-  } catch (parseError) {
-    // If JSON parsing fails, use the raw text as summary
-    console.log('⚠️ [Gemini] JSON parse failed, using raw text');
-    return {
-      summary: responseText.substring(0, 500) || 'Image content extracted.',
-      keyPoints: []
-    };
-  }
+  // All models failed
+  throw new Error(`All Gemini models failed. Last error: ${lastError}`);
 }
 
 // ============================================
