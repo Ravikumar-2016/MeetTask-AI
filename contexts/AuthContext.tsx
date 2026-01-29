@@ -47,6 +47,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, name: string, role: UserRole) => Promise<void>;
   googleLogin: (name: string, role: UserRole) => Promise<void>;
+  completeGoogleSignup: (name: string, role: UserRole) => Promise<void>;
   logout: () => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -65,6 +66,7 @@ const AuthContext = createContext<AuthContextType>({
   login: async () => {},
   signup: async () => {},
   googleLogin: async () => {},
+  completeGoogleSignup: async () => {},
   logout: async () => {},
   sendVerificationEmail: async () => {},
   sendPasswordReset: async () => {},
@@ -347,6 +349,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [createUserInFirestore, updateUserInFirestore, buildUserObject]);
 
   /**
+   * Complete Google Signup for new users (after role selection)
+   * This re-authenticates with Google and creates the Firestore document
+   */
+  const completeGoogleSignup = useCallback(async (name: string, role: UserRole) => {
+    try {
+      console.log('🔵 [Auth] Completing Google signup with role:', role);
+      
+      // Re-authenticate with Google (user already selected account before)
+      const result = await signInWithPopup(auth, googleProvider);
+      
+      // Check if somehow already exists (edge case)
+      const existingUser = await findUserByEmail(result.user.email!);
+      
+      if (existingUser) {
+        // Just update and proceed
+        await updateUserInFirestore(result.user, 'google', existingUser);
+      } else {
+        // Create new user with the selected role
+        const displayName = name || result.user.displayName || result.user.email!.split('@')[0];
+        await createUserInFirestore(result.user, 'google', displayName, role);
+      }
+      
+      const userObj = await buildUserObject(result.user);
+      if (userObj) {
+        setUser(userObj);
+        console.log('✅ [Auth] Google signup complete:', userObj.mtaiId, 'role:', userObj.role);
+      }
+    } catch (error: any) {
+      console.error('❌ [Auth] Complete Google signup error:', error);
+      if (error.code) {
+        throw new Error(getAuthErrorMessage(error));
+      }
+      throw error;
+    }
+  }, [createUserInFirestore, updateUserInFirestore, buildUserObject]);
+
+  /**
    * Sign out
    */
   const logout = useCallback(async () => {
@@ -410,6 +449,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     login,
     signup,
     googleLogin,
+    completeGoogleSignup,
     logout,
     sendVerificationEmail,
     sendPasswordReset,

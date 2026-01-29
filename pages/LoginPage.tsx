@@ -86,6 +86,7 @@ const LoginPage: React.FC = () => {
     login, 
     signup, 
     googleLogin,
+    completeGoogleSignup,
     logout,
     sendVerificationEmail,
     sendPasswordReset,
@@ -317,12 +318,27 @@ const LoginPage: React.FC = () => {
     setError('');
 
     try {
-      // Now complete the Google signup with the selected role
-      await googleLogin(name.trim(), role);
+      // Complete the Google signup with the selected role
+      // This will re-authenticate with Google and create the Firestore document
+      await completeGoogleSignup(name.trim(), role);
+      
+      // Clear pending state
+      setPendingGoogleUser(null);
+      
+      // Show success and redirect
       setSuccess('Account created! Redirecting...');
+      
+      // Navigate after a brief delay to show success message
+      setTimeout(() => {
+        navigate(from, { replace: true });
+      }, 500);
     } catch (err: any) {
       console.error('Complete Google signup error:', err);
-      setError(err.message || 'Failed to complete signup');
+      if (err.message?.includes('popup-closed')) {
+        setError('Please complete the Google sign-in to create your account');
+      } else {
+        setError(err.message || 'Failed to complete signup');
+      }
     } finally {
       setLoading(false);
     }
