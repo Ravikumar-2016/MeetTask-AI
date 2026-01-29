@@ -260,8 +260,6 @@ export interface CloudinarySignResponse {
   apiKey: string;
   folder: string;
   publicId: string;
-  allowedFormats: string[];
-  maxFileSize: number;
 }
 
 // ============================================

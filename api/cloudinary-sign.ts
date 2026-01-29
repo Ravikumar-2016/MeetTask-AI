@@ -218,21 +218,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
       .replace(/[^a-zA-Z0-9_-]/g, '_') // Sanitize
       .substring(0, 50); // Limit length
     
-    const uniqueId = `${sanitizedFileName}_${Date.now()}`;
+    const uniqueId = `${sanitizedFileName}_${timestamp}`;
 
-    // Parameters to sign (alphabetically sorted for signature)
+    // Parameters to sign - MUST match exactly what frontend sends
+    // Cloudinary requires alphabetical order for signature
     const paramsToSign: Record<string, string | number> = {
       folder,
       public_id: uniqueId,
       timestamp,
-      // Add upload restrictions
-      allowed_formats: ALLOWED_EXTENSIONS.join(','),
     };
 
     // Generate signature
     const signature = generateCloudinarySignature(paramsToSign, apiSecret);
 
-    console.log('✅ Signature generated for folder:', folder);
+    console.log('✅ Signature generated');
+    console.log('   Folder:', folder);
+    console.log('   Public ID:', uniqueId);
+    console.log('   Timestamp:', timestamp);
+    console.log('   Params to sign:', JSON.stringify(paramsToSign));
 
     return response.status(200).json({
       success: true,
@@ -242,9 +245,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
       apiKey,
       folder,
       publicId: uniqueId,
-      allowedFormats: ALLOWED_EXTENSIONS,
-      maxFileSize: MAX_FILE_SIZE,
     });
+
 
   } catch (error: any) {
     console.error('❌ [Cloudinary Sign] Error:', error);

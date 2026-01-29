@@ -190,16 +190,20 @@ export async function uploadFileToCloudinary(
       throw new Error('Failed to get upload authorization');
     }
 
-    console.log('[FileUpload] Signature received, folder:', signData.folder);
+    console.log('[FileUpload] Signature received');
+    console.log('[FileUpload] Folder:', signData.folder);
+    console.log('[FileUpload] Public ID:', signData.publicId);
+    console.log('[FileUpload] Timestamp:', signData.timestamp);
 
     // Step 2: Upload to Cloudinary
+    // IMPORTANT: Only send params that were signed (folder, public_id, timestamp)
     const formData = new FormData();
     formData.append('file', file);
     formData.append('api_key', signData.apiKey);
-    formData.append('timestamp', signData.timestamp.toString());
-    formData.append('signature', signData.signature);
     formData.append('folder', signData.folder);
     formData.append('public_id', signData.publicId);
+    formData.append('timestamp', signData.timestamp.toString());
+    formData.append('signature', signData.signature);
 
     // Use XMLHttpRequest for progress tracking
     const result = await new Promise<FileUploadResult>((resolve, reject) => {
