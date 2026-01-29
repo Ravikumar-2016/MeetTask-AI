@@ -263,8 +263,9 @@ export async function uploadFileToCloudinary(
       // Set timeout (5 minutes for large files)
       xhr.timeout = 5 * 60 * 1000;
 
-      // Send request
-      const uploadUrl = `${CLOUDINARY_UPLOAD_URL}/${signData.cloudName}/auto/upload`;
+      // Send request - Use 'raw' resource type for documents (pdf, docx, xlsx, zip, txt)
+      // This ensures proper delivery and avoids image transformation issues
+      const uploadUrl = `${CLOUDINARY_UPLOAD_URL}/${signData.cloudName}/raw/upload`;
       xhr.open('POST', uploadUrl);
       xhr.send(formData);
     });
