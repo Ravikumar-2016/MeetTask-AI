@@ -95,7 +95,7 @@ const MeetingDetailsPage: React.FC = () => {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
-  const [taskType, setTaskType] = useState<'text' | 'file'>('text');
+  const [requiresFile, setRequiresFile] = useState(false);
   const [assignedEmployee, setAssignedEmployee] = useState('');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [dueDate, setDueDate] = useState('');
@@ -193,11 +193,12 @@ const MeetingDetailsPage: React.FC = () => {
         const data = doc.data();
         tasksData.push({
           id: doc.id,
+          taskId: data.taskId || doc.id,
           meetingId: data.meetingId,
           meetingTitle: data.meetingTitle,
           title: data.title,
           description: data.description,
-          taskType: data.taskType || 'text',
+          requiresFile: data.requiresFile || false,
           assignedTo: data.assignedTo,
           assignedToName: data.assignedToName,
           assignedToEmail: data.assignedToEmail,
@@ -347,7 +348,7 @@ const MeetingDetailsPage: React.FC = () => {
           meetingId: id,
           title: taskTitle.trim(),
           description: taskDescription.trim(),
-          taskType,
+          requiresFile,
           assignedToMtaiId: assignedEmployee,
           priority,
           dueDate: dueDate || null,
@@ -362,7 +363,7 @@ const MeetingDetailsPage: React.FC = () => {
       // Reset form and close modal
       setTaskTitle('');
       setTaskDescription('');
-      setTaskType('text');
+      setRequiresFile(false);
       setAssignedEmployee('');
       setPriority('medium');
       setDueDate('');
@@ -477,74 +478,50 @@ const MeetingDetailsPage: React.FC = () => {
                 </div>
               ) : (
                 tasks.map((task) => (
-                  <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-4">
-                        <div className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                  <div key={task.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${
                           task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
                         }`}>
-                          {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
+                          {task.status === 'completed' && <span className="material-icons text-sm">check</span>}
                         </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
-                              {task.title}
-                            </h4>
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium border ${priorityColors[task.priority]}`}>
-                              {task.priority}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-semibold">
+                              {task.taskId}
                             </span>
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[task.status]}`}>
-                              {statusLabels[task.status]}
+                            <span className="text-sm font-medium text-slate-700">
+                              Assigned to: {task.assignedToName || task.assignedTo}
                             </span>
                           </div>
-                          {task.description && (
-                            <p className="text-slate-600 text-sm mt-1">{task.description}</p>
-                          )}
-                          <div className="flex flex-wrap gap-4 mt-3">
-                            <div className="flex items-center text-sm text-slate-500">
-                              <span className="material-icons text-[14px] mr-1">person</span> 
-                              {task.assignedToName || task.assignedTo}
-                            </div>
-                            <div className="flex items-center text-sm text-slate-500">
-                              <span className="material-icons text-[14px] mr-1">
-                                {task.taskType === 'file' ? 'attach_file' : 'text_fields'}
-                              </span> 
-                              {task.taskType === 'file' ? 'File upload required' : 'Text response'}
-                            </div>
-                            {task.dueDate && (
-                              <div className="flex items-center text-sm text-slate-500">
-                                <span className="material-icons text-[14px] mr-1">event</span> 
-                                Due: {task.dueDate}
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* Show submission if exists */}
-                          {(task.submissionText || task.submissionFileUrl) && (
-                            <div className="mt-3 p-3 bg-green-50 border border-green-100 rounded-lg">
-                              <p className="text-xs font-semibold text-green-700 mb-1">
-                                <span className="material-icons text-xs mr-1 align-middle">check_circle</span>
-                                Submitted by {task.assignedToName}
-                              </p>
-                              {task.submissionText && (
-                                <p className="text-sm text-green-800 mt-1">{task.submissionText}</p>
-                              )}
-                              {task.submissionFileUrl && (
-                                <a
-                                  href={task.submissionFileUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
-                                >
-                                  <span className="material-icons text-sm">attach_file</span>
-                                  {task.submissionFileName || 'View attachment'}
-                                </a>
-                              )}
-                            </div>
-                          )}
                         </div>
                       </div>
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${statusColors[task.status]}`}>
+                        {statusLabels[task.status]}
+                      </span>
                     </div>
+
+                    {/* Show submission if exists */}
+                    {task.submissionText && (
+                      <div className="mt-3 p-3 bg-green-50 border border-green-100 rounded-lg">
+                        <p className="text-xs font-semibold text-green-700 mb-1">
+                          <span className="material-icons text-xs mr-1 align-middle">check_circle</span>
+                          Submitted
+                        </p>
+                        {task.submissionFileUrl && (
+                          <a
+                            href={task.submissionFileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-sm text-green-700 hover:text-green-800 underline"
+                          >
+                            <span className="material-icons text-sm">attach_file</span>
+                            {task.submissionFileName || 'View file'}
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -900,40 +877,22 @@ const MeetingDetailsPage: React.FC = () => {
                 />
               </div>
 
-              {/* Task Type */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Response Type <span className="text-red-500">*</span>
+              {/* File Upload Requirement */}
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={requiresFile}
+                    onChange={(e) => setRequiresFile(e.target.checked)}
+                    className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                  />
+                  <div>
+                    <p className="font-medium text-slate-700 text-sm">Require file upload</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Text response is always required. Check this if employee should also upload a file (PDF, ZIP, images, etc.)
+                    </p>
+                  </div>
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setTaskType('text')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
-                      taskType === 'text'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className="material-icons text-sm">text_fields</span>
-                    Text Response
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaskType('file')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
-                      taskType === 'file'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className="material-icons text-sm">attach_file</span>
-                    File Upload
-                  </button>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  {taskType === 'file' ? 'Employee will need to upload a file (PDF, ZIP, Image)' : 'Employee will provide a text response'}
-                </p>
               </div>
 
               {/* Priority */}

@@ -61,7 +61,7 @@ const TaskManagerPage: React.FC = () => {
   const [selectedMeetingId, setSelectedMeetingId] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
-  const [taskType, setTaskType] = useState<'text' | 'file'>('text');
+  const [requiresFile, setRequiresFile] = useState(false);
   const [assignedEmployee, setAssignedEmployee] = useState('');
   const [priority, setPriority] = useState<'medium' | 'high' | 'low' | 'critical'>('medium');
   const [dueDate, setDueDate] = useState('');
@@ -145,11 +145,12 @@ const TaskManagerPage: React.FC = () => {
           const data = doc.data();
           tasksData.push({
             id: doc.id,
+            taskId: data.taskId || doc.id,
             meetingId: data.meetingId,
             meetingTitle: data.meetingTitle,
             title: data.title,
             description: data.description,
-            taskType: data.taskType || 'text',
+            requiresFile: data.requiresFile || false,
             assignedTo: data.assignedTo,
             assignedToName: data.assignedToName,
             assignedToEmail: data.assignedToEmail,
@@ -254,7 +255,7 @@ const TaskManagerPage: React.FC = () => {
           meetingId: selectedMeetingId,
           title: taskTitle.trim(),
           description: taskDescription.trim(),
-          taskType,
+          requiresFile,
           assignedToMtaiId: assignedEmployee,
           priority,
           dueDate: dueDate || null,
@@ -269,6 +270,7 @@ const TaskManagerPage: React.FC = () => {
       // Reset form
       setTaskTitle('');
       setTaskDescription('');
+      setRequiresFile(false);
       setAssignedEmployee('');
       setPriority('medium');
       setDueDate('');
@@ -281,7 +283,7 @@ const TaskManagerPage: React.FC = () => {
     } finally {
       setCreating(false);
     }
-  }, [selectedMeetingId, taskTitle, taskDescription, assignedEmployee, priority, dueDate]);
+  }, [selectedMeetingId, taskTitle, taskDescription, requiresFile, assignedEmployee, priority, dueDate]);
 
   // Format date helper
   const formatDate = (timestamp: Timestamp | string | null | undefined): string => {
@@ -483,40 +485,22 @@ const TaskManagerPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Task Type */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Response Type *
+              {/* File Upload Requirement */}
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={requiresFile}
+                    onChange={(e) => setRequiresFile(e.target.checked)}
+                    className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                  />
+                  <div>
+                    <p className="font-medium text-slate-700 text-sm">Require file upload</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Text response is always required. Check this if employee should also upload a file (PDF, ZIP, images, etc.)
+                    </p>
+                  </div>
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setTaskType('text')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
-                      taskType === 'text'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className="material-icons text-sm">text_fields</span>
-                    Text Response
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaskType('file')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
-                      taskType === 'file'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <span className="material-icons text-sm">attach_file</span>
-                    File Upload
-                  </button>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  {taskType === 'file' ? 'Employee will need to upload a file' : 'Employee will provide a text response'}
-                </p>
               </div>
 
               {/* Priority */}
@@ -605,6 +589,7 @@ const TaskManagerPage: React.FC = () => {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{task.taskId}</span>
                     <h3 className="font-semibold text-slate-900 truncate">{task.title}</h3>
                     <span className={`px-2 py-0.5 rounded text-xs font-medium border ${priorityColors[task.priority]}`}>
                       {task.priority}
@@ -615,12 +600,12 @@ const TaskManagerPage: React.FC = () => {
                   </div>
                   <p className="text-sm text-slate-500 mb-2">
                     {task.meetingTitle} • Assigned to: <span className="font-medium">{task.assignedToName}</span>
-                    <span className="inline-flex items-center ml-2 text-slate-400">
-                      <span className="material-icons text-[12px] mr-0.5">
-                        {task.taskType === 'file' ? 'attach_file' : 'text_fields'}
+                    {task.requiresFile && (
+                      <span className="inline-flex items-center ml-2 text-amber-600">
+                        <span className="material-icons text-[12px] mr-0.5">attach_file</span>
+                        File required
                       </span>
-                      {task.taskType === 'file' ? 'File' : 'Text'}
-                    </span>
+                    )}
                   </p>
                   {task.description && (
                     <p className="text-sm text-slate-600 line-clamp-2">{task.description}</p>

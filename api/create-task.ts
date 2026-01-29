@@ -11,6 +11,7 @@
  *   meetingId: string,
  *   title: string,
  *   description: string,
+ *   requiresFile: boolean,
  *   assignedToMtaiId: string,
  *   priority: 'critical' | 'high' | 'medium' | 'low',
  *   dueDate?: string (ISO format)
@@ -103,7 +104,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     // Parse request
-    const { meetingId, title, description, assignedToMtaiId, priority, dueDate, taskType } = request.body;
+    const { meetingId, title, description, assignedToMtaiId, priority, dueDate, requiresFile } = request.body;
 
     // Validate required fields
     if (!meetingId) {
@@ -120,13 +121,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const validPriorities = ['critical', 'high', 'medium', 'low'];
     const taskPriority = validPriorities.includes(priority) ? priority : 'medium';
 
-    // Validate task type
-    const validTaskTypes = ['text', 'file'];
-    const validatedTaskType: 'text' | 'file' = validTaskTypes.includes(taskType) ? taskType : 'text';
+    // Parse requiresFile boolean
+    const fileRequired = requiresFile === true;
 
     console.log('📁 Meeting ID:', meetingId);
     console.log('📝 Title:', title);
-    console.log('� Task Type:', validatedTaskType);
+    console.log('📎 Requires File:', fileRequired);
     console.log('�👤 Assigned to:', assignedToMtaiId);
 
     // Get meeting to verify ownership and status
@@ -158,11 +158,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(400).json({ error: 'Tasks can only be assigned to employees' });
     }
 
-    // Create the task
+    // Generate sequential task ID
+    const counterRef = db.collection('counters').doc('taskCounter');
+    const counterDoc = await counterRef.get();
+    let taskNumber = 1;
+    
+    if (counterDoc.exists) {
+      taskNumber = (counterDoc.data()?.lastUsedTaskId || 0) + 1;
+    }
+    
+    await counterRef.set({ lastUsedTaskId: taskNumber }, { merge: true });
+    const taskId = `TASK${String(taskNumber).padStart(3, '0')}`;
+
+    // Create the task with generated ID
     const taskRef = db.collection('tasks').doc();
     
     const taskData = {
       id: taskRef.id,
+      taskId: taskId,
       meetingId,
       meetingTitle: meeting.title || 'Untitled Meeting',
       
@@ -179,7 +192,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       // Task details
       title: title.trim(),
       description: (description || '').trim(),
-      taskType: validatedTaskType,
+      requiresFile: fileRequired,
       priority: taskPriority,
       status: 'pending',
       dueDate: dueDate || null,
@@ -208,7 +221,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     });
 
     console.log('\n✅ Task created successfully!');
-    console.log('   - Task ID:', taskRef.id);
+    console.log('   - Task ID:', taskId);
+    console.log('   - Firestore Doc ID:', taskRef.id);
     console.log('   - Assigned to:', assigneeData.name || assigneeData.email);
 
     return response.status(200).json({

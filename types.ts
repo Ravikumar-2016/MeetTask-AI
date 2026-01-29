@@ -178,7 +178,8 @@ export interface TaskSubmission {
  * Task - manually created by manager
  */
 export interface Task {
-  id: string;
+  id: string;                      // Firestore document ID
+  taskId: string;                  // Sequential ID like TASK001, TASK002
   meetingId: string;
   meetingTitle?: string;
   
@@ -195,7 +196,7 @@ export interface Task {
   // Task details
   title: string;
   description?: string;
-  taskType: 'text' | 'file';       // Expected response type
+  requiresFile: boolean;           // Whether file upload is required (text response always required)
   priority: TaskPriority;
   status: TaskStatus;
   dueDate?: string | null;         // YYYY-MM-DD format
