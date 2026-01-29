@@ -1,24 +1,31 @@
 /**
- * LoginPage.tsx - Professional Authentication UI
+ * LoginPage.tsx - Professional Authentication UI with Role Selection
  * 
  * Features:
  * - Login with email/password
- * - Signup with email verification
+ * - Signup with email verification and role selection
+ * - Google OAuth with role selection for NEW users
  * - Forgot password flow
- * - Google OAuth
- * - Show/hide password toggle
- * - Professional error handling
- * - Loading states
- * - Smooth transitions
+ * - Professional UI with smooth transitions
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { signInWithPopup } from 'firebase/auth';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { auth, db, googleProvider } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
 
 // Auth screen modes
-type AuthMode = 'login' | 'signup' | 'forgot-password' | 'verify-email' | 'reset-sent';
+type AuthMode = 'login' | 'signup' | 'forgot-password' | 'verify-email' | 'reset-sent' | 'google-role-select';
+
+// Google user info for role selection
+interface PendingGoogleUser {
+  email: string;
+  displayName: string | null;
+  photoURL: string | null;
+}
 
 // Eye icons for password visibility toggle
 const EyeIcon = () => (
@@ -54,14 +61,14 @@ const LoginPage: React.FC = () => {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<UserRole>('employee');
+  const [role, setRole] = useState<UserRole | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-  // Google signup flow - needs role selection after OAuth
-  const [pendingGoogleUser, setPendingGoogleUser] = useState<boolean>(false);
+  // Google signup flow - store user info while selecting role
+  const [pendingGoogleUser, setPendingGoogleUser] = useState<PendingGoogleUser | null>(null);
   
   // UI state
   const [error, setError] = useState('');
@@ -89,10 +96,28 @@ const LoginPage: React.FC = () => {
   const from = (location.state as any)?.from?.pathname || '/dashboard';
 
   /**
+   * Check if email exists in Firestore
+   */
+  const checkUserExists = async (emailToCheck: string): Promise<boolean> => {
+    try {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('email', '==', emailToCheck));
+      const snapshot = await getDocs(q);
+      return !snapshot.empty;
+    } catch (error) {
+      console.error('Error checking user:', error);
+      return false;
+    }
+  };
+
+  /**
    * Handle user state changes - redirect when appropriate
    */
   useEffect(() => {
     if (authLoading) return;
+    
+    // Don't redirect if we're in Google role selection mode
+    if (mode === 'google-role-select') return;
     
     if (user) {
       const isGoogleUser = user.authProviders?.includes('google') ?? false;
@@ -106,7 +131,7 @@ const LoginPage: React.FC = () => {
         setMode('verify-email');
       }
     }
-  }, [user, authLoading, navigate, from]);
+  }, [user, authLoading, navigate, from, mode]);
 
   /**
    * Countdown timer for resend button
@@ -132,14 +157,14 @@ const LoginPage: React.FC = () => {
   const resetForm = useCallback(() => {
     setEmail('');
     setName('');
-    setRole('employee');
+    setRole(null);
     setPassword('');
     setConfirmPassword('');
     setShowPassword(false);
     setShowConfirmPassword(false);
     setError('');
     setSuccess('');
-    setPendingGoogleUser(false);
+    setPendingGoogleUser(null);
   }, []);
 
   /**
@@ -172,6 +197,12 @@ const LoginPage: React.FC = () => {
     // Validate name
     if (!name.trim()) {
       setError('Please enter your full name.');
+      return;
+    }
+
+    // Validate role selection
+    if (!role) {
+      setError('Please select your role (Manager or Employee).');
       return;
     }
 
@@ -220,7 +251,7 @@ const LoginPage: React.FC = () => {
   };
 
   /**
-   * Handle Google sign in (for login - existing users)
+   * Handle Google sign in - check if user exists first
    */
   const handleGoogleSignIn = async () => {
     setError('');
@@ -228,38 +259,82 @@ const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      // Try to sign in - googleLogin handles existing vs new users
-      await googleLogin(name.trim() || '', role);
-      setSuccess('Google sign-in successful! Redirecting...');
+      // First, do the Google popup
+      const result = await signInWithPopup(auth, googleProvider);
+      const googleEmail = result.user.email;
+      
+      if (!googleEmail) {
+        throw new Error('No email from Google account');
+      }
+
+      // Check if user already exists in Firestore
+      const userExists = await checkUserExists(googleEmail);
+      
+      if (userExists) {
+        // Existing user - complete login
+        await googleLogin('', 'employee'); // Role doesn't matter for existing users
+        setSuccess('Welcome back! Redirecting...');
+      } else {
+        // NEW USER - Sign out and show role selection
+        await logout();
+        
+        // Store Google user info for later
+        setPendingGoogleUser({
+          email: googleEmail,
+          displayName: result.user.displayName,
+          photoURL: result.user.photoURL,
+        });
+        
+        // Pre-fill name from Google
+        setName(result.user.displayName || '');
+        
+        // Switch to role selection mode
+        setMode('google-role-select');
+      }
     } catch (err: any) {
-      setError(err.message);
+      console.error('Google sign in error:', err);
+      setError(err.message || 'Failed to sign in with Google');
     } finally {
       setLoading(false);
     }
   };
 
   /**
-   * Handle Google signup (new users - needs name and role)
+   * Complete Google signup after role selection
    */
-  const handleGoogleSignup = async () => {
-    setError('');
-    setSuccess('');
+  const handleCompleteGoogleSignup = async () => {
+    if (!pendingGoogleUser || !role) {
+      setError('Please select your role to continue');
+      return;
+    }
 
     if (!name.trim()) {
-      setError('Please enter your full name before continuing with Google.');
+      setError('Please enter your full name');
       return;
     }
 
     setLoading(true);
+    setError('');
 
     try {
+      // Now complete the Google signup with the selected role
       await googleLogin(name.trim(), role);
-      setSuccess('Account created with Google! Redirecting...');
+      setSuccess('Account created! Redirecting...');
     } catch (err: any) {
-      setError(err.message);
+      console.error('Complete Google signup error:', err);
+      setError(err.message || 'Failed to complete signup');
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Cancel Google role selection
+   */
+  const handleCancelGoogleSignup = () => {
+    setPendingGoogleUser(null);
+    resetForm();
+    setMode('login');
   };
 
   /**
@@ -601,21 +676,16 @@ const LoginPage: React.FC = () => {
 
                 {renderDivider()}
 
-                {/* Google signup - only if name is provided */}
+                {/* Google signup */}
                 <button
                   type="button"
-                  onClick={handleGoogleSignup}
-                  disabled={loading || !name.trim()}
+                  onClick={handleGoogleSignIn}
+                  disabled={loading}
                   className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <GoogleIcon />
                   <span>Sign up with Google</span>
                 </button>
-                {!name.trim() && (
-                  <p className="text-xs text-center text-slate-500">
-                    Enter your name above to enable Google signup
-                  </p>
-                )}
 
                 <p className="text-center text-sm text-slate-600 mt-6">
                   Already have an account?{' '}
@@ -626,6 +696,137 @@ const LoginPage: React.FC = () => {
                     Sign in
                   </button>
                 </p>
+              </div>
+            </>
+          )}
+
+          {/* ========== GOOGLE ROLE SELECTION ========== */}
+          {mode === 'google-role-select' && pendingGoogleUser && (
+            <>
+              <div className="text-center mb-6">
+                {pendingGoogleUser.photoURL && (
+                  <img 
+                    src={pendingGoogleUser.photoURL} 
+                    alt="Profile" 
+                    className="w-20 h-20 rounded-full mx-auto mb-4 border-4 border-indigo-100"
+                  />
+                )}
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Complete Your Profile</h2>
+                <p className="text-slate-500">
+                  Welcome! Please select your role to set up your account.
+                </p>
+              </div>
+
+              <div className="space-y-5">
+                {renderError()}
+                {renderSuccess()}
+
+                {/* Email (read-only) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={pendingGoogleUser.email}
+                    disabled
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-600 outline-none"
+                  />
+                </div>
+
+                {/* Name */}
+                <div>
+                  <label htmlFor="google-name" className="block text-sm font-medium text-slate-700 mb-1">
+                    Full Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="google-name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+
+                {/* Role Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-3">
+                    Select your role <span className="text-red-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setRole('manager')}
+                      className={`relative flex flex-col items-center p-5 rounded-2xl border-2 transition-all ${
+                        role === 'manager'
+                          ? 'border-indigo-500 bg-indigo-50 shadow-lg'
+                          : 'border-slate-200 hover:border-slate-300 hover:shadow'
+                      }`}
+                    >
+                      {role === 'manager' && (
+                        <div className="absolute top-2 right-2 w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center">
+                          <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-3 ${
+                        role === 'manager' ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                      </div>
+                      <span className={`font-bold ${role === 'manager' ? 'text-indigo-700' : 'text-slate-900'}`}>Manager</span>
+                      <span className="text-xs text-slate-500 mt-1 text-center">Create meetings & assign tasks</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRole('employee')}
+                      className={`relative flex flex-col items-center p-5 rounded-2xl border-2 transition-all ${
+                        role === 'employee'
+                          ? 'border-indigo-500 bg-indigo-50 shadow-lg'
+                          : 'border-slate-200 hover:border-slate-300 hover:shadow'
+                      }`}
+                    >
+                      {role === 'employee' && (
+                        <div className="absolute top-2 right-2 w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center">
+                          <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-3 ${
+                        role === 'employee' ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                      <span className={`font-bold ${role === 'employee' ? 'text-indigo-700' : 'text-slate-900'}`}>Employee</span>
+                      <span className="text-xs text-slate-500 mt-1 text-center">View & complete assigned tasks</span>
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCompleteGoogleSignup}
+                  disabled={loading || !role || !name.trim()}
+                  className="w-full flex justify-center py-3 px-4 border border-transparent rounded-xl shadow-sm text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {loading ? <Spinner /> : 'Complete Signup'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancelGoogleSignup}
+                  className="w-full text-center text-sm text-slate-600 hover:text-slate-900 font-medium"
+                >
+                  ← Back to sign in
+                </button>
               </div>
             </>
           )}

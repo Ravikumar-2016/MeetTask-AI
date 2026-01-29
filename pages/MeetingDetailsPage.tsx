@@ -237,27 +237,27 @@ const MeetingDetailsPage: React.FC = () => {
             id: doc.id,
             meetingId: data.meetingId,
             meetingTitle: data.meetingTitle,
-            userId: data.userId,
             title: data.title || 'Untitled Task',
             description: data.description || '',
-            owner: data.assignedToName || data.owner || 'Unassigned',
-            deadline: data.dueDate || data.deadline || '',
             priority: (data.priority as TaskPriorityExtended) || 'medium',
             status: (data.status as TaskStatusExtended) || 'pending',
-            // Speaker assignment fields
-            assignedTo: data.assignedTo || 'Unassigned',
+            // Assignee fields
+            assignedTo: data.assignedTo || '',
             assignedToName: data.assignedToName || '',
             assignedToEmail: data.assignedToEmail || '',
-            creatorId: data.creatorId || data.userId || '',
+            // Creator fields
+            creatorId: data.creatorId || '',
             creatorMtaiId: data.creatorMtaiId,
-            speakerId: data.speakerId,
+            creatorName: data.creatorName,
             dueDate: data.dueDate,
-            confidence: data.confidence,
-            sourceSentence: data.sourceSentence || '',
-            completed: data.completed || data.status === 'completed',
+            // Submission fields
+            submissionText: data.submissionText,
+            submissionFileUrl: data.submissionFileUrl,
+            submissionFileName: data.submissionFileName,
+            submittedAt: data.submittedAt?.toDate?.()?.toISOString(),
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
-            updates: data.updates || [],
-            emailSent: data.emailSent || false,
+            updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
+            completedAt: data.completedAt?.toDate?.()?.toISOString(),
           });
         });
 
@@ -483,7 +483,7 @@ const MeetingDetailsPage: React.FC = () => {
 
       <div className="grid lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          {/* Tabs for Action Items and Transcript */}
+          {/* Tabs for Tasks and Transcript */}
           <div className="flex space-x-1 bg-slate-100 p-1 rounded-xl w-fit">
             <button
               onClick={() => setActiveTab('tasks')}
@@ -491,7 +491,7 @@ const MeetingDetailsPage: React.FC = () => {
                 activeTab === 'tasks' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              Action Items
+              Tasks
             </button>
             <button
               onClick={() => setActiveTab('transcript')}
@@ -511,7 +511,7 @@ const MeetingDetailsPage: React.FC = () => {
                   <h3 className="font-bold text-slate-900 mb-2">No tasks yet</h3>
                   <p className="text-slate-500 mb-4">
                     {meeting.status === 'completed' 
-                      ? 'No action items were extracted from this meeting'
+                      ? 'No tasks have been created for this meeting yet'
                       : 'Tasks will appear here after processing completes'}
                   </p>
                   {meeting.status === 'completed' && (
@@ -528,7 +528,7 @@ const MeetingDetailsPage: React.FC = () => {
                       ) : (
                         <>
                           <span className="material-icons text-sm">refresh</span>
-                          Re-map Speakers & Extract Tasks
+                          Re-map Speakers
                         </>
                       )}
                     </button>
@@ -543,29 +543,27 @@ const MeetingDetailsPage: React.FC = () => {
                     <div className="flex items-start justify-between">
                       <div className="flex items-start space-x-4">
                         <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
-                          task.status === 'completed' || task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
+                          task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
                         }`}>
-                          {(task.status === 'completed' || task.completed) && <span className="material-icons text-xs">check</span>}
+                          {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
                         </button>
                         <div>
-                          <h4 className={`font-bold text-lg ${task.status === 'completed' || task.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
+                          <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
                           {task.description && (
                             <p className="text-slate-600 text-sm mt-1">{task.description}</p>
                           )}
                           <div className="flex flex-wrap gap-4 mt-2">
                             <div className="flex items-center text-sm text-slate-500">
                               <span className="material-icons text-[14px] mr-1">person</span> 
-                              {task.assignedTo || task.owner}
-                              {task.confidence && task.confidence >= 0.8 && (
-                                <span className="ml-1 text-emerald-500" title={`${Math.round(task.confidence * 100)}% confident`}>✓</span>
-                              )}
+                              {task.assignedToName || task.assignedTo || 'Unassigned'}
                             </div>
-                            {task.deadline && task.deadline !== 'No deadline' && (
+                            {task.dueDate && (
                               <div className="flex items-center text-sm text-slate-500">
-                                <span className="material-icons text-[14px] mr-1">event</span> {task.deadline}
+                                <span className="material-icons text-[14px] mr-1">event</span> {task.dueDate}
                               </div>
                             )}
                             <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
+                              task.priority === 'critical' ? 'bg-red-50 text-red-600 border border-red-100' :
                               task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 
                               task.priority === 'low' ? 'bg-slate-50 text-slate-500 border border-slate-100' :
                               'bg-amber-50 text-amber-600 border border-amber-100'
@@ -579,15 +577,6 @@ const MeetingDetailsPage: React.FC = () => {
                         <span className="material-icons">more_vert</span>
                       </button>
                     </div>
-                    {/* Source sentence if available */}
-                    {task.sourceSentence && (
-                      <div className="mt-3 pt-3 border-t border-slate-100">
-                        <p className="text-xs text-slate-400 italic">
-                          <span className="material-icons text-[12px] mr-1 align-middle">format_quote</span>
-                          "{task.sourceSentence}"
-                        </p>
-                      </div>
-                    )}
                   </div>
                 ))
               )}
@@ -691,7 +680,7 @@ const MeetingDetailsPage: React.FC = () => {
               <p className="text-blue-600 text-sm">Audio is being transcribed. This may take a few minutes.</p>
             )}
             {meeting.status === 'analyzing' && (
-              <p className="text-purple-600 text-sm">Extracting action items from transcript...</p>
+              <p className="text-purple-600 text-sm">Processing meeting transcript...</p>
             )}
             {meeting.status === 'uploaded' && (
               <p className="text-amber-600 text-sm">Meeting uploaded. Waiting for processing to begin.</p>

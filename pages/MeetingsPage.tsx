@@ -139,7 +139,7 @@ const MeetingsPage: React.FC = () => {
 
               <div className="flex items-center space-x-6">
                 <div className="hidden sm:flex flex-col items-end">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Action Items</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Tasks</span>
                   <span className="text-lg font-bold text-slate-900">{meeting.taskCount || 0}</span>
                 </div>
                 <div className="flex items-center space-x-3">
