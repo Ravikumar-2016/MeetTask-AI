@@ -182,44 +182,57 @@ async function extractTasksWithGemini(
     ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
     : transcriptText;
 
-  const prompt = `You are a meeting assistant that extracts action items from meeting transcripts.
+  const prompt = `You are a meeting task extraction assistant. Your job is to find ALL action items from meeting transcripts.
 
-SPEAKER MAPPING:
+SPEAKER MAPPING (who said what):
 ${speakerInfo}
 
 MEETING TRANSCRIPT:
 ${truncatedTranscript}
 
-TASK:
-Extract ALL action items and tasks from this meeting transcript. Look for:
-- Explicit commitments ("I'll do...", "I will...")
-- Assignments ("Can you...", "Please...")
-- Decisions that require follow-up
-- Deadlines mentioned
+YOUR TASK:
+Extract EVERY possible action item, task, or commitment from this transcript. Be thorough - it's better to extract too many than miss something important.
 
-For each task, return a JSON object with these exact fields:
-- "title": Brief, actionable task title (max 80 characters)
-- "description": Clear description of what needs to be done
-- "assignedToMtaiId": The MTAI ID (e.g., "MTAI001") of the person responsible based on speaker mapping
-- "speakerId": The speaker letter (A, B, C, etc.) who owns this task
-- "priority": One of "critical", "high", "medium", or "low"
-- "dueDate": If a deadline is mentioned, use YYYY-MM-DD format, otherwise null
-- "sourceSentence": The exact quote from the transcript that mentions this task
+Look for ANY of these patterns:
+- Direct assignments: "You need to...", "Can you...", "Please..."
+- Self-commitments: "I'll...", "I will...", "I'm going to...", "Let me..."
+- Questions implying action: "Will you...?", "Can you handle...?"
+- Deadlines: "by Friday", "next week", "tomorrow", "end of day"
+- Action verbs: complete, finish, send, review, check, update, create, fix, build, test, deploy
+- Follow-ups: "Let's discuss", "We should", "Need to"
 
-PRIORITY GUIDELINES:
-- critical: Urgent, blocking other work, explicitly marked as priority
-- high: Important deadline mentioned, significant business impact
-- medium: Normal work items, standard priority
-- low: Nice-to-have, can be delayed, minor items
+For EACH task found, return a JSON object:
+{
+  "title": "Brief task title (e.g., 'Complete frontend development')",
+  "description": "What exactly needs to be done",
+  "assignedToMtaiId": "The MTAI ID from speaker mapping (e.g., MTAI001)",
+  "speakerId": "Speaker letter (A, B, C) who owns this task",
+  "priority": "high", "medium", or "low",
+  "dueDate": "YYYY-MM-DD if mentioned, otherwise null",
+  "sourceSentence": "Exact quote from transcript"
+}
 
-IMPORTANT RULES:
-1. Only extract CLEAR action items with explicit commitments
-2. Match tasks to the correct speaker using the mapping above
-3. Never invent tasks that weren't discussed
-4. If no clear tasks are found, return an empty array []
-5. Return ONLY valid JSON array - no markdown, no explanations
+RULES:
+1. Extract tasks for ALL speakers who have assignments
+2. If someone says "I will do X", that's a task for THEM
+3. If someone says "Can you do X", that's a task for the OTHER person
+4. Be generous - if it sounds like an action item, include it
+5. Return ONLY a JSON array, no markdown or explanation
 
-Return your response as a JSON array of task objects:`;
+Example output:
+[
+  {
+    "title": "Complete frontend development",
+    "description": "Finish the frontend work and send it",
+    "assignedToMtaiId": "MTAI001",
+    "speakerId": "A",
+    "priority": "high",
+    "dueDate": null,
+    "sourceSentence": "I'll complete the frontend and send it immediately"
+  }
+]
+
+Return your JSON array now:`;
 
   try {
     console.log('📤 Gemini: Sending request via SDK...');
@@ -238,28 +251,41 @@ Return your response as a JSON array of task objects:`;
     // Parse JSON from response
     let tasks: any[] = [];
     try {
+      console.log('📄 Gemini FULL response:', content);
+      
+      // Clean the response - remove markdown code blocks if present
+      let cleanContent = content.trim();
+      if (cleanContent.startsWith('```json')) {
+        cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleanContent.startsWith('```')) {
+        cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '');
+      }
+      
       // Try to find JSON array in response
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         tasks = JSON.parse(jsonMatch[0]);
         console.log('✅ Gemini: Parsed', tasks.length, 'tasks');
+        if (tasks.length > 0) {
+          console.log('📋 First task:', JSON.stringify(tasks[0], null, 2));
+        }
       } else {
         // Try direct parse
-        tasks = JSON.parse(content);
+        tasks = JSON.parse(cleanContent);
         if (!Array.isArray(tasks)) {
-          console.warn('⚠️ Gemini: Response is not an array');
-          tasks = [];
+          console.warn('⚠️ Gemini: Response is not an array, wrapping in array');
+          tasks = [tasks];
         }
       }
     } catch (parseError: any) {
       console.error('❌ Failed to parse Gemini response:', parseError.message);
-      console.log('📄 Raw response:', content);
+      console.log('📄 Raw response that failed to parse:', content);
     }
 
     return Array.isArray(tasks) ? tasks : [];
   } catch (error: any) {
     console.error('❌ Gemini extraction failed:', error.message);
-    return [];
+    throw error; // Re-throw to trigger error handling
   }
 }
 

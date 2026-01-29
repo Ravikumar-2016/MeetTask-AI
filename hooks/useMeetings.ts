@@ -220,7 +220,7 @@ export const useMeetings = (): UseMeetingsReturn => {
 /**
  * Get status badge color class
  */
-export const getStatusBadgeClass = (status: MeetingStatus): string => {
+export const getStatusBadgeClass = (status: MeetingStatus | string): string => {
   switch (status) {
     case 'completed':
       return 'bg-emerald-100 text-emerald-700';
@@ -233,7 +233,10 @@ export const getStatusBadgeClass = (status: MeetingStatus): string => {
     case 'uploaded':
       return 'bg-slate-100 text-slate-700';
     case 'error':
+    case 'task_extraction_failed':
       return 'bg-rose-100 text-rose-700';
+    case 'no_tasks_found':
+      return 'bg-orange-100 text-orange-700';
     default:
       return 'bg-slate-100 text-slate-700';
   }
@@ -258,6 +261,10 @@ export const getStatusLabel = (status: MeetingStatus | string): string => {
       return 'UPLOADED';
     case 'error':
       return 'ERROR';
+    case 'no_tasks_found':
+      return 'NO_TASKS_FOUND';
+    case 'task_extraction_failed':
+      return 'EXTRACTION FAILED';
     default:
       return (status as string)?.toUpperCase() || 'UNKNOWN';
   }
