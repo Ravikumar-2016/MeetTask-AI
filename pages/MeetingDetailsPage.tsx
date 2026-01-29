@@ -24,6 +24,8 @@ import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Meeting, Task, SpeakerUtterance, SpeakerMapping, FirestoreUser, TaskPriority } from '../types';
 import { getStatusBadgeClass, getStatusLabel } from '../hooks/useMeetings';
+import { useToast } from '../hooks/useToast';
+import ToastContainer from '../components/ToastContainer';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
@@ -70,6 +72,7 @@ const formatDate = (timestamp: Timestamp | string | undefined): string => {
 const MeetingDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { user, isManager, loading: authLoading } = useAuth();
+  const { toasts, success, error: showError, removeToast } = useToast();
   const [activeTab, setActiveTab] = useState<'tasks' | 'transcript'>('tasks');
   
   // State for meeting data
@@ -360,6 +363,12 @@ const MeetingDetailsPage: React.FC = () => {
         throw new Error(error.error || 'Failed to create task');
       }
 
+      const result = await res.json();
+      console.log('[MeetingDetails] Task created:', result);
+
+      // Show success message
+      success(`Task created successfully! Assigned to ${result.task?.assignedToName || 'employee'}`);
+
       // Reset form and close modal
       setTaskTitle('');
       setTaskDescription('');
@@ -371,6 +380,7 @@ const MeetingDetailsPage: React.FC = () => {
     } catch (err: any) {
       console.error('[MeetingDetails] Error creating task:', err);
       setTaskError(err.message);
+      showError(err.message || 'Failed to create task');
     } finally {
       setCreatingTask(false);
     }
@@ -406,8 +416,10 @@ const MeetingDetailsPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header - Clean, no Share/Export */}
+    <>
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <div className="space-y-8">
+        {/* Header - Clean, no Share/Export */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <Link 
@@ -956,7 +968,8 @@ const MeetingDetailsPage: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 

@@ -22,6 +22,8 @@ import {
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Task, Meeting, FirestoreUser } from '../types';
+import { useToast } from '../hooks/useToast';
+import ToastContainer from '../components/ToastContainer';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
@@ -49,6 +51,7 @@ const statusLabels: Record<string, string> = {
 const TaskManagerPage: React.FC = () => {
   const { user, isManager, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const { toasts, success, error: showError, removeToast } = useToast();
   
   // Data state
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -267,6 +270,12 @@ const TaskManagerPage: React.FC = () => {
         throw new Error(error.error || 'Failed to create task');
       }
 
+      const result = await res.json();
+      console.log('[TaskManager] Task created:', result);
+
+      // Show success message
+      success(`Task ${result.task?.taskId || 'created'} assigned to ${result.task?.assignedToName || 'employee'}`);
+
       // Reset form
       setTaskTitle('');
       setTaskDescription('');
@@ -275,15 +284,14 @@ const TaskManagerPage: React.FC = () => {
       setPriority('medium');
       setDueDate('');
       setShowCreateForm(false);
-      
-      console.log('[TaskManager] Task created successfully');
     } catch (err: any) {
       console.error('[TaskManager] Error creating task:', err);
       setCreateError(err.message);
+      showError(err.message || 'Failed to create task');
     } finally {
       setCreating(false);
     }
-  }, [selectedMeetingId, taskTitle, taskDescription, requiresFile, assignedEmployee, priority, dueDate]);
+  }, [selectedMeetingId, taskTitle, taskDescription, requiresFile, assignedEmployee, priority, dueDate, success, showError]);
 
   // Format date helper
   const formatDate = (timestamp: Timestamp | string | null | undefined): string => {
@@ -324,8 +332,10 @@ const TaskManagerPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <>
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <div className="space-y-6">
+        {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Task Manager</h1>
@@ -645,7 +655,8 @@ const TaskManagerPage: React.FC = () => {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 
