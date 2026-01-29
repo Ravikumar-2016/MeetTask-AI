@@ -410,18 +410,21 @@ const TasksPage: React.FC = () => {
 
   // Fetch tasks assigned to current employee
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !user) {
+      console.log('[TasksPage] Skipping - authLoading:', authLoading, 'user:', !!user);
+      return;
+    }
 
     const mtaiId = user.mtaiId;
     
     if (!mtaiId) {
-      console.log('[TasksPage] No MTAI ID');
+      console.log('[TasksPage] No MTAI ID found for user');
       setTasks([]);
       setLoading(false);
       return;
     }
 
-    console.log('[TasksPage] Loading tasks for:', mtaiId);
+    console.log('[TasksPage] Setting up task listener for assignedTo:', mtaiId);
     setLoading(true);
 
     const tasksQuery = query(
@@ -432,9 +435,11 @@ const TasksPage: React.FC = () => {
     const unsubscribe = onSnapshot(
       tasksQuery,
       (snapshot) => {
+        console.log('[TasksPage] Tasks snapshot received, count:', snapshot.size);
         const tasksData: Task[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
+          console.log('[TasksPage] Task found:', doc.id, 'assignedTo:', data.assignedTo);
           tasksData.push({
             id: doc.id,
             meetingId: data.meetingId,
@@ -458,11 +463,12 @@ const TasksPage: React.FC = () => {
         // Sort by priority
         tasksData.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
+        console.log('[TasksPage] Setting tasks state, count:', tasksData.length);
         setTasks(tasksData);
         setLoading(false);
       },
       (err) => {
-        console.error('[TasksPage] Error:', err);
+        console.error('[TasksPage] Query error:', err);
         setError('Failed to load tasks');
         setLoading(false);
       }

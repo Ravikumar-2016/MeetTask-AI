@@ -129,23 +129,50 @@ const TaskManagerPage: React.FC = () => {
     loadMeetings();
   }, [user?.uid, authLoading, isManager]);
 
-  // Load tasks created by this manager
+  // Load tasks created by this manager - Real-time listener
   useEffect(() => {
-    if (authLoading || !user?.uid || !isManager) return;
+    if (authLoading || !user?.uid || !isManager) {
+      console.log('[TaskManager] Skipping task query - auth:', authLoading, 'uid:', user?.uid, 'isManager:', isManager);
+      return;
+    }
 
-    // Simple query without compound index requirement
-    const loadTasks = async () => {
+    console.log('[TaskManager] Setting up task listener for creatorId:', user.uid);
+
+    // First, let's fetch ALL tasks to debug
+    const fetchAllTasks = async () => {
       try {
-        const tasksQuery = query(
-          collection(db, 'tasks'),
-          where('creatorId', '==', user.uid)
-        );
-        
-        const snapshot = await getDocs(tasksQuery);
+        const allTasksSnapshot = await getDocs(collection(db, 'tasks'));
+        console.log('[TaskManager] ALL tasks in Firestore:', allTasksSnapshot.size);
+        allTasksSnapshot.forEach((doc) => {
+          const data = doc.data();
+          console.log('[TaskManager] Task:', doc.id, {
+            taskId: data.taskId,
+            meetingId: data.meetingId,
+            creatorId: data.creatorId,
+            assignedTo: data.assignedTo,
+            title: data.title
+          });
+        });
+      } catch (err) {
+        console.error('[TaskManager] Error fetching all tasks:', err);
+      }
+    };
+    fetchAllTasks();
+
+    const tasksQuery = query(
+      collection(db, 'tasks'),
+      where('creatorId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(
+      tasksQuery,
+      (snapshot) => {
+        console.log('[TaskManager] Tasks snapshot received, count:', snapshot.size);
         const tasksData: Task[] = [];
         
         snapshot.forEach((doc) => {
           const data = doc.data();
+          console.log('[TaskManager] Task found:', doc.id, data.taskId, 'creatorId:', data.creatorId);
           tasksData.push({
             id: doc.id,
             taskId: data.taskId || doc.id,
@@ -176,16 +203,17 @@ const TaskManagerPage: React.FC = () => {
           return bTime - aTime;
         });
         
+        console.log('[TaskManager] Setting tasks state, count:', tasksData.length);
         setTasks(tasksData);
         setLoading(false);
-        console.log('[TaskManager] Tasks loaded:', tasksData.length);
-      } catch (err) {
-        console.error('[TaskManager] Error loading tasks:', err);
+      },
+      (error) => {
+        console.error('[TaskManager] Task query error:', error);
         setLoading(false);
       }
-    };
-    
-    loadTasks();
+    );
+
+    return () => unsubscribe();
   }, [user?.uid, authLoading, isManager]);
 
   // Load employees for assignment dropdown
@@ -335,6 +363,13 @@ const TaskManagerPage: React.FC = () => {
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <div className="space-y-6">
+        {/* Debug Info - Remove in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-xs font-mono">
+            <p><strong>Debug:</strong> User UID: {user?.uid} | Tasks loaded: {tasks.length}</p>
+            <p>Meetings loaded: {meetings.length} | Employees: {employees.length}</p>
+          </div>
+        )}
         {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

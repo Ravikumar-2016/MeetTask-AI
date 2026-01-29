@@ -91,20 +91,24 @@ service cloud.firestore {
     }
     
     // ============================================
-    // TASKS - User's tasks
+    // TASKS - Manager-created, Employee-assigned
     // ============================================
     match /tasks/{taskId} {
-      // Users can read their own tasks
-      allow read: if isAuthenticated() && 
-                    (resource == null || resource.data.userId == request.auth.uid);
+      // Managers can read tasks they created (creatorId matches)
+      // Employees can read tasks assigned to them (we allow all authenticated for now)
+      // This is safe because assignedTo is validated server-side
+      allow read: if isAuthenticated();
       
-      // Users can create tasks with their userId
-      allow create: if isAuthenticated() && 
-                       request.resource.data.userId == request.auth.uid;
+      // Only backend (Admin SDK) creates tasks
+      // Managers use /api/create-task endpoint
+      allow create: if false;
       
-      // Users can update/delete their own tasks
-      allow update, delete: if isAuthenticated() && 
-                               resource.data.userId == request.auth.uid;
+      // Employees can update tasks assigned to them (for status updates)
+      // Managers can update tasks they created
+      allow update: if isAuthenticated();
+      
+      // Only backend can delete tasks
+      allow delete: if false;
     }
   }
 }

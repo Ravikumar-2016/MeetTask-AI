@@ -183,49 +183,64 @@ const MeetingDetailsPage: React.FC = () => {
 
   // Listen for task updates for this meeting
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      console.log('[MeetingDetails] No meeting ID, skipping task query');
+      return;
+    }
+
+    console.log('[MeetingDetails] Setting up task listener for meetingId:', id);
 
     const tasksQuery = query(
       collection(db, 'tasks'),
       where('meetingId', '==', id)
     );
 
-    const unsubscribe = onSnapshot(tasksQuery, (snapshot) => {
-      const tasksData: Task[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        tasksData.push({
-          id: doc.id,
-          taskId: data.taskId || doc.id,
-          meetingId: data.meetingId,
-          meetingTitle: data.meetingTitle,
-          title: data.title,
-          description: data.description,
-          requiresFile: data.requiresFile || false,
-          assignedTo: data.assignedTo,
-          assignedToName: data.assignedToName,
-          assignedToEmail: data.assignedToEmail,
-          priority: data.priority,
-          status: data.status,
-          dueDate: data.dueDate,
-          submissionText: data.submissionText,
-          submissionFileUrl: data.submissionFileUrl,
-          submissionFileName: data.submissionFileName,
-          submittedAt: data.submittedAt,
-          createdAt: data.createdAt,
-          creatorId: data.creatorId,
-          creatorName: data.creatorName,
-        } as Task);
-      });
-      
-      // Sort by creation date
-      tasksData.sort((a, b) => {
-        const aTime = a.createdAt?.toDate?.()?.getTime() || 0;
-        const bTime = b.createdAt?.toDate?.()?.getTime() || 0;
-        return bTime - aTime;
-      });
-      
-      setTasks(tasksData);
+    const unsubscribe = onSnapshot(
+      tasksQuery, 
+      (snapshot) => {
+        console.log('[MeetingDetails] Tasks snapshot received, count:', snapshot.size);
+        const tasksData: Task[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          console.log('[MeetingDetails] Task found:', doc.id, data.taskId, 'meetingId:', data.meetingId);
+          tasksData.push({
+            id: doc.id,
+            taskId: data.taskId || doc.id,
+            meetingId: data.meetingId,
+            meetingTitle: data.meetingTitle,
+            title: data.title,
+            description: data.description,
+            requiresFile: data.requiresFile || false,
+            assignedTo: data.assignedTo,
+            assignedToName: data.assignedToName,
+            assignedToEmail: data.assignedToEmail,
+            priority: data.priority,
+            status: data.status,
+            dueDate: data.dueDate,
+            submissionText: data.submissionText,
+            submissionFileUrl: data.submissionFileUrl,
+            submissionFileName: data.submissionFileName,
+            submittedAt: data.submittedAt,
+            createdAt: data.createdAt,
+            creatorId: data.creatorId,
+            creatorName: data.creatorName,
+          } as Task);
+        });
+        
+        // Sort by creation date
+        tasksData.sort((a, b) => {
+          const aTime = a.createdAt?.toDate?.()?.getTime() || 0;
+          const bTime = b.createdAt?.toDate?.()?.getTime() || 0;
+          return bTime - aTime;
+        });
+        
+        console.log('[MeetingDetails] Setting tasks state, count:', tasksData.length);
+        setTasks(tasksData);
+      },
+      (error) => {
+        console.error('[MeetingDetails] Task query error:', error);
+      }
+    );
     });
 
     return () => unsubscribe();
@@ -419,6 +434,13 @@ const MeetingDetailsPage: React.FC = () => {
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <div className="space-y-8">
+        {/* Debug Info - Remove in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-xs font-mono">
+            <p><strong>Debug:</strong> Meeting ID: {id} | Tasks loaded: {tasks.length}</p>
+            <p>User UID: {user?.uid} | Manager: {isManager ? 'Yes' : 'No'}</p>
+          </div>
+        )}
         {/* Header - Clean, no Share/Export */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
