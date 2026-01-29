@@ -19,28 +19,17 @@
  * }
  */
 
-// CRITICAL: Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
+// CRITICAL: Force Node.js runtime
 export const runtime = "nodejs";
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ============================================
-// GEMINI CONFIG (Official SDK)
+// OPENAI CONFIG (More reliable than Gemini)
 // ============================================
-// Using gemini-pro-latest - stable, API-enabled model
-const GEMINI_MODEL = 'gemini-pro-latest';
-
-function getGeminiModel() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({ model: GEMINI_MODEL });
-}
+const OPENAI_MODEL = 'gpt-4o-mini'; // Fast, cheap, reliable
 
 // ============================================
 // FIREBASE ADMIN SETUP
@@ -147,23 +136,22 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// TASK EXTRACTION WITH GEMINI (Official SDK)
+// TASK EXTRACTION WITH OPENAI (GPT-4o-mini)
 // ============================================
-async function extractTasksWithGemini(
+async function extractTasksWithAI(
   transcriptText: string,
   speakerMapping: SpeakerMapping,
   mtaiIdToName: Map<string, string>
 ): Promise<any[]> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   
   if (!apiKey) {
-    console.error('❌ GEMINI_API_KEY not configured');
-    return [];
+    console.error('❌ OPENAI_API_KEY not configured');
+    throw new Error('OPENAI_API_KEY not configured');
   }
   
-  console.log('🤖 Gemini: Extracting tasks using official SDK...');
-  console.log('🔧 Gemini: Model:', GEMINI_MODEL);
-  console.log('🗺️ Gemini: Speaker mapping:', speakerMapping);
+  console.log('🤖 OpenAI: Extracting tasks with GPT-4o-mini...');
+  console.log('🗺️ Speaker mapping:', speakerMapping);
   
   // Build speaker info for prompt
   const speakerInfo = Object.entries(speakerMapping)
@@ -174,7 +162,7 @@ async function extractTasksWithGemini(
     })
     .join('\n');
 
-  console.log('👥 Gemini: Speaker info:\n', speakerInfo);
+  console.log('👥 Speaker info:\n', speakerInfo);
 
   // Truncate transcript to fit context window
   const maxTranscriptLength = 25000;
@@ -182,77 +170,62 @@ async function extractTasksWithGemini(
     ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
     : transcriptText;
 
-  const prompt = `You are a meeting task extraction assistant. Your job is to find ALL action items from meeting transcripts.
+  const systemPrompt = `You are a meeting task extraction assistant. Extract ALL action items from meeting transcripts.
 
-SPEAKER MAPPING (who said what):
+For each task, return a JSON object with:
+- "title": Brief task title
+- "description": What needs to be done
+- "assignedToMtaiId": The MTAI ID from speaker mapping
+- "speakerId": Speaker letter (A, B, C) who owns this task
+- "priority": "high", "medium", or "low"
+- "dueDate": YYYY-MM-DD if mentioned, otherwise null
+- "sourceSentence": Exact quote from transcript
+
+Return ONLY a valid JSON array. No markdown, no explanation.`;
+
+  const userPrompt = `SPEAKER MAPPING:
 ${speakerInfo}
 
-MEETING TRANSCRIPT:
+TRANSCRIPT:
 ${truncatedTranscript}
 
-YOUR TASK:
-Extract EVERY possible action item, task, or commitment from this transcript. Be thorough - it's better to extract too many than miss something important.
-
-Look for ANY of these patterns:
-- Direct assignments: "You need to...", "Can you...", "Please..."
-- Self-commitments: "I'll...", "I will...", "I'm going to...", "Let me..."
-- Questions implying action: "Will you...?", "Can you handle...?"
-- Deadlines: "by Friday", "next week", "tomorrow", "end of day"
-- Action verbs: complete, finish, send, review, check, update, create, fix, build, test, deploy
-- Follow-ups: "Let's discuss", "We should", "Need to"
-
-For EACH task found, return a JSON object:
-{
-  "title": "Brief task title (e.g., 'Complete frontend development')",
-  "description": "What exactly needs to be done",
-  "assignedToMtaiId": "The MTAI ID from speaker mapping (e.g., MTAI001)",
-  "speakerId": "Speaker letter (A, B, C) who owns this task",
-  "priority": "high", "medium", or "low",
-  "dueDate": "YYYY-MM-DD if mentioned, otherwise null",
-  "sourceSentence": "Exact quote from transcript"
-}
-
-RULES:
-1. Extract tasks for ALL speakers who have assignments
-2. If someone says "I will do X", that's a task for THEM
-3. If someone says "Can you do X", that's a task for the OTHER person
-4. Be generous - if it sounds like an action item, include it
-5. Return ONLY a JSON array, no markdown or explanation
-
-Example output:
-[
-  {
-    "title": "Complete frontend development",
-    "description": "Finish the frontend work and send it",
-    "assignedToMtaiId": "MTAI001",
-    "speakerId": "A",
-    "priority": "high",
-    "dueDate": null,
-    "sourceSentence": "I'll complete the frontend and send it immediately"
-  }
-]
-
-Return your JSON array now:`;
+Extract all tasks as JSON array:`;
 
   try {
-    console.log('📤 Gemini: Sending request via SDK...');
+    console.log('📤 OpenAI: Sending request...');
+    console.log('📄 Transcript length:', truncatedTranscript.length, 'chars');
     
-    // Initialize Gemini client with official SDK
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 4000,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ OpenAI API error:', response.status, errorText);
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '[]';
     
-    // Generate content
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const content = response.text();
-    
-    console.log('📄 Gemini response (first 500 chars):', content.substring(0, 500));
+    console.log('📄 OpenAI response:', content);
 
     // Parse JSON from response
     let tasks: any[] = [];
     try {
-      console.log('📄 Gemini FULL response:', content);
-      
       // Clean the response - remove markdown code blocks if present
       let cleanContent = content.trim();
       if (cleanContent.startsWith('```json')) {
@@ -265,27 +238,25 @@ Return your JSON array now:`;
       const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         tasks = JSON.parse(jsonMatch[0]);
-        console.log('✅ Gemini: Parsed', tasks.length, 'tasks');
+        console.log('✅ OpenAI: Parsed', tasks.length, 'tasks');
         if (tasks.length > 0) {
           console.log('📋 First task:', JSON.stringify(tasks[0], null, 2));
         }
       } else {
-        // Try direct parse
         tasks = JSON.parse(cleanContent);
         if (!Array.isArray(tasks)) {
-          console.warn('⚠️ Gemini: Response is not an array, wrapping in array');
           tasks = [tasks];
         }
       }
     } catch (parseError: any) {
-      console.error('❌ Failed to parse Gemini response:', parseError.message);
-      console.log('📄 Raw response that failed to parse:', content);
+      console.error('❌ Failed to parse OpenAI response:', parseError.message);
+      console.log('📄 Raw response:', content);
     }
 
     return Array.isArray(tasks) ? tasks : [];
   } catch (error: any) {
-    console.error('❌ Gemini extraction failed:', error.message);
-    throw error; // Re-throw to trigger error handling
+    console.error('❌ OpenAI extraction failed:', error.message);
+    throw error;
   }
 }
 
@@ -413,8 +384,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('👥 Users found:', usersMap.size);
     console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
 
-    // Extract tasks using Gemini AI
-    console.log('🤖 Extracting tasks with Gemini...');
+    // Extract tasks using OpenAI
+    console.log('🤖 Extracting tasks with OpenAI GPT-4o-mini...');
     
     let extractedTasks: any[] = [];
     
@@ -422,25 +393,25 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const transcriptText = transcript.formattedTranscript || transcript.text || '';
     console.log('📄 Transcript length:', transcriptText.length, 'chars');
     
-    // Track if Gemini extraction actually failed (vs just finding no tasks)
-    let geminiError: string | null = null;
+    // Track if AI extraction actually failed (vs just finding no tasks)
+    let aiError: string | null = null;
     
     if (transcriptText.length > 50) {
-      if (process.env.GEMINI_API_KEY) {
+      if (process.env.OPENAI_API_KEY) {
         try {
-          extractedTasks = await extractTasksWithGemini(
+          extractedTasks = await extractTasksWithAI(
             transcriptText,
             speakerMapping,
             mtaiIdToName
           );
-          console.log('✅ Gemini extraction completed, tasks:', extractedTasks.length);
+          console.log('✅ OpenAI extraction completed, tasks:', extractedTasks.length);
         } catch (err: any) {
-          geminiError = err.message;
-          console.error('❌ Gemini extraction FAILED:', geminiError);
+          aiError = err.message;
+          console.error('❌ OpenAI extraction FAILED:', aiError);
           // CRITICAL: Set error status and STOP pipeline
           await meetingRef.update({
             status: 'task_extraction_failed',
-            errorMessage: `Gemini AI failed: ${geminiError}`,
+            errorMessage: `OpenAI failed: ${aiError}`,
             speakerMapping,
             speakerMappingComplete: true,
             updatedAt: FieldValue.serverTimestamp(),
@@ -449,13 +420,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
           return response.status(200).json({
             success: false,
             error: 'Task extraction failed',
-            errorDetails: geminiError,
+            errorDetails: aiError,
             status: 'task_extraction_failed',
           });
         }
       } else {
-        console.error('❌ GEMINI_API_KEY not configured - cannot extract tasks');
-        geminiError = 'GEMINI_API_KEY not configured';
+        console.error('❌ OPENAI_API_KEY not configured - cannot extract tasks');
+        aiError = 'OPENAI_API_KEY not configured';
       }
     } else {
       console.warn('⚠️ Transcript too short for task extraction');
@@ -469,7 +440,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     for (const task of extractedTasks) {
       const taskRef = db.collection('tasks').doc();
-      // Use mtaiId from Gemini response or fall back to first speaker
+      // Use mtaiId from AI response or fall back to first speaker
       const assignedMtaiId = task.assignedToMtaiId || task.assignedTo || mtaiIds[0] || '';
       
       // Normalize priority
@@ -530,16 +501,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
     });
 
     // CRITICAL: Determine correct status based on extraction result
-    // Don't mark as completed if Gemini failed (0 tasks from extraction failure)
+    // Don't mark as completed if AI failed (0 tasks from extraction failure)
     let finalStatus: string;
     if (savedTasks.length > 0) {
       finalStatus = 'completed';
     } else if (transcriptText.length < 50) {
       finalStatus = 'no_tasks_found'; // Transcript too short
     } else {
-      // Gemini was called but returned 0 tasks - could be failure or genuinely no tasks
-      // Check if GEMINI_API_KEY exists to distinguish
-      finalStatus = process.env.GEMINI_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
+      // AI was called but returned 0 tasks - could be failure or genuinely no tasks
+      // Check if OPENAI_API_KEY exists to distinguish
+      finalStatus = process.env.OPENAI_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
     }
 
     // Update meeting with correct status
