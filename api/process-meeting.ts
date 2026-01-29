@@ -25,6 +25,11 @@
  * @module api/process-meeting
  */
 
+// Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
+export const config = {
+  runtime: 'nodejs',
+};
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { adminDb } from './_lib/firebaseAdmin';
 import { verifyToken, AuthError } from './_lib/verifyToken';
