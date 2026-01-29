@@ -27,9 +27,10 @@ import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 // ============================================
-// OPENAI CONFIG (More reliable than Gemini)
+// GROQ CONFIG (Free, fast, OpenAI-compatible)
 // ============================================
-const OPENAI_MODEL = 'gpt-4o-mini'; // Fast, cheap, reliable
+const GROQ_MODEL = 'llama-3.1-70b-versatile'; // Best for task extraction
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // ============================================
 // FIREBASE ADMIN SETUP
@@ -136,21 +137,21 @@ async function lookupUsersByMtaiId(
 }
 
 // ============================================
-// TASK EXTRACTION WITH OPENAI (GPT-4o-mini)
+// TASK EXTRACTION WITH GROQ (Free, Fast)
 // ============================================
 async function extractTasksWithAI(
   transcriptText: string,
   speakerMapping: SpeakerMapping,
   mtaiIdToName: Map<string, string>
 ): Promise<any[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   
   if (!apiKey) {
-    console.error('❌ OPENAI_API_KEY not configured');
-    throw new Error('OPENAI_API_KEY not configured');
+    console.error('❌ GROQ_API_KEY not configured');
+    throw new Error('GROQ_API_KEY not configured');
   }
   
-  console.log('🤖 OpenAI: Extracting tasks with GPT-4o-mini...');
+  console.log('🤖 Groq: Extracting tasks with Llama 3.1 70B...');
   console.log('🗺️ Speaker mapping:', speakerMapping);
   
   // Build speaker info for prompt
@@ -164,8 +165,8 @@ async function extractTasksWithAI(
 
   console.log('👥 Speaker info:\n', speakerInfo);
 
-  // Truncate transcript to fit context window
-  const maxTranscriptLength = 25000;
+  // Truncate transcript to fit context window (Llama has 128k context)
+  const maxTranscriptLength = 30000;
   const truncatedTranscript = transcriptText.length > maxTranscriptLength 
     ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
     : transcriptText;
@@ -192,17 +193,17 @@ ${truncatedTranscript}
 Extract all tasks as JSON array:`;
 
   try {
-    console.log('📤 OpenAI: Sending request...');
+    console.log('📤 Groq: Sending request...');
     console.log('📄 Transcript length:', truncatedTranscript.length, 'chars');
     
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
+        model: GROQ_MODEL,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -214,14 +215,14 @@ Extract all tasks as JSON array:`;
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ OpenAI API error:', response.status, errorText);
-      throw new Error(`OpenAI API error: ${response.status}`);
+      console.error('❌ Groq API error:', response.status, errorText);
+      throw new Error(`Groq API error: ${response.status}`);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '[]';
     
-    console.log('📄 OpenAI response:', content);
+    console.log('📄 Groq response:', content);
 
     // Parse JSON from response
     let tasks: any[] = [];
@@ -238,7 +239,7 @@ Extract all tasks as JSON array:`;
       const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         tasks = JSON.parse(jsonMatch[0]);
-        console.log('✅ OpenAI: Parsed', tasks.length, 'tasks');
+        console.log('✅ Groq: Parsed', tasks.length, 'tasks');
         if (tasks.length > 0) {
           console.log('📋 First task:', JSON.stringify(tasks[0], null, 2));
         }
@@ -249,13 +250,13 @@ Extract all tasks as JSON array:`;
         }
       }
     } catch (parseError: any) {
-      console.error('❌ Failed to parse OpenAI response:', parseError.message);
+      console.error('❌ Failed to parse Groq response:', parseError.message);
       console.log('📄 Raw response:', content);
     }
 
     return Array.isArray(tasks) ? tasks : [];
   } catch (error: any) {
-    console.error('❌ OpenAI extraction failed:', error.message);
+    console.error('❌ Groq extraction failed:', error.message);
     throw error;
   }
 }
@@ -384,8 +385,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('👥 Users found:', usersMap.size);
     console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
 
-    // Extract tasks using OpenAI
-    console.log('🤖 Extracting tasks with OpenAI GPT-4o-mini...');
+    // Extract tasks using Groq AI
+    console.log('🤖 Extracting tasks with Groq Llama 3.1...');
     
     let extractedTasks: any[] = [];
     
@@ -397,21 +398,21 @@ export default async function handler(request: VercelRequest, response: VercelRe
     let aiError: string | null = null;
     
     if (transcriptText.length > 50) {
-      if (process.env.OPENAI_API_KEY) {
+      if (process.env.GROQ_API_KEY) {
         try {
           extractedTasks = await extractTasksWithAI(
             transcriptText,
             speakerMapping,
             mtaiIdToName
           );
-          console.log('✅ OpenAI extraction completed, tasks:', extractedTasks.length);
+          console.log('✅ Groq extraction completed, tasks:', extractedTasks.length);
         } catch (err: any) {
           aiError = err.message;
-          console.error('❌ OpenAI extraction FAILED:', aiError);
+          console.error('❌ Groq extraction FAILED:', aiError);
           // CRITICAL: Set error status and STOP pipeline
           await meetingRef.update({
             status: 'task_extraction_failed',
-            errorMessage: `OpenAI failed: ${aiError}`,
+            errorMessage: `Groq AI failed: ${aiError}`,
             speakerMapping,
             speakerMappingComplete: true,
             updatedAt: FieldValue.serverTimestamp(),
@@ -425,8 +426,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
           });
         }
       } else {
-        console.error('❌ OPENAI_API_KEY not configured - cannot extract tasks');
-        aiError = 'OPENAI_API_KEY not configured';
+        console.error('❌ GROQ_API_KEY not configured - cannot extract tasks');
+        aiError = 'GROQ_API_KEY not configured';
       }
     } else {
       console.warn('⚠️ Transcript too short for task extraction');
@@ -509,8 +510,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
       finalStatus = 'no_tasks_found'; // Transcript too short
     } else {
       // AI was called but returned 0 tasks - could be failure or genuinely no tasks
-      // Check if OPENAI_API_KEY exists to distinguish
-      finalStatus = process.env.OPENAI_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
+      // Check if GROQ_API_KEY exists to distinguish
+      finalStatus = process.env.GROQ_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
     }
 
     // Update meeting with correct status
