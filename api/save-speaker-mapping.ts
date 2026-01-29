@@ -32,7 +32,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // ============================================
 // GEMINI CONFIG (Official SDK)
 // ============================================
-const GEMINI_MODEL = 'gemini-pro'; // Correct SDK model name (free tier)
+const GEMINI_MODEL = 'gemini-2.0-flash'; // Fast, free-tier model
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
