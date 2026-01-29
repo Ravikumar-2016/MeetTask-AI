@@ -315,11 +315,11 @@ export function canPreviewFile(fileName: string): boolean {
 /**
  * Get secure file URL through our proxy endpoint
  * This avoids direct Cloudinary URLs which can cause 401 errors
- * Uses the dedicated file delivery endpoint with Cloudinary SDK authentication
+ * Uses submit-task endpoint with GET method and Cloudinary SDK authentication
  */
 export function getSecureFileUrl(taskId: string, download: boolean = false): string {
-  const baseUrl = `/api/file/${taskId}`;
-  return download ? `${baseUrl}?download=true` : baseUrl;
+  const baseUrl = `/api/submit-task?taskId=${taskId}`;
+  return download ? `${baseUrl}&download=true` : baseUrl;
 }
 
 /**
