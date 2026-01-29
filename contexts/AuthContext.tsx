@@ -1,20 +1,14 @@
 /**
- * AuthContext.tsx - Authentication System for MeetTask AI
+ * AuthContext.tsx - Authentication System for MeetTask AI (v2)
  * 
- * ARCHITECTURE:
- * - Firebase Auth = Authentication only (Google, Email/Password)
- * - Firestore = User database
+ * SIMPLIFIED ARCHITECTURE:
+ * - Two roles: Manager and Employee
+ * - Role selected during signup (required)
+ * - Role stored in Firestore and included in user context
  * 
  * STORAGE:
- * - users/{mtaiId}     → User documents (MTAI001, MTAI002, etc.)
- * - counters/users     → { lastId: number } for ID generation
- * 
- * FEATURES:
- * - Human-readable MTAI IDs (MTAI001, MTAI002, etc.)
- * - Email deduplication (same email = same user)
- * - Provider merging (Google + Password = same user)
- * - Email verification for password signups
- * - Password reset
+ * - users/{mtaiId} → User documents with role
+ * - counters/users → { lastId: number } for ID generation
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
@@ -33,7 +27,6 @@ import {
   doc, 
   setDoc, 
   getDoc, 
-  deleteDoc,
   collection, 
   query, 
   where, 
@@ -42,7 +35,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../lib/firebase';
-import { User, FirestoreUser, AuthProvider as AuthProviderType } from '../types';
+import { User, FirestoreUser, AuthProvider as AuthProviderType, UserRole } from '../types';
 
 // ============================================
 // TYPES
@@ -52,12 +45,14 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
-  googleLogin: () => Promise<void>;
+  signup: (email: string, password: string, name: string, role: UserRole) => Promise<void>;
+  googleLogin: (name: string, role: UserRole) => Promise<void>;
   logout: () => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   refreshUser: () => Promise<void>;
+  isManager: boolean;
+  isEmployee: boolean;
 }
 
 // ============================================
@@ -73,7 +68,9 @@ const AuthContext = createContext<AuthContextType>({
   logout: async () => {},
   sendVerificationEmail: async () => {},
   sendPasswordReset: async () => {},
-  refreshUser: async () => {}
+  refreshUser: async () => {},
+  isManager: false,
+  isEmployee: false
 });
 
 // ============================================
@@ -92,125 +89,56 @@ const getAuthErrorMessage = (error: AuthError): string => {
     'auth/user-disabled': 'This account has been disabled. Please contact support.',
     'auth/popup-closed-by-user': 'Sign-in popup was closed. Please try again.',
     'auth/popup-blocked': 'Popup was blocked by your browser. Please allow popups for this site.',
-    'auth/account-exists-with-different-credential': 'An account already exists with this email using a different sign-in method.',
     'auth/network-request-failed': 'Network error. Please check your internet connection.',
   };
 
-  return errorMessages[error.code] || error.message || 'An unexpected error occurred. Please try again.';
+  return errorMessages[error.code] || error.message || 'An unexpected error occurred.';
 };
 
 // ============================================
 // MTAI ID GENERATION
 // ============================================
 
-/**
- * Generate next sequential MTAI ID
- * Uses Firestore transaction to ensure uniqueness
- * Counter stored at: counters/users → { lastId: number }
- */
 const generateMtaiId = async (): Promise<string> => {
   const counterRef = doc(db, 'counters', 'users');
   
-  try {
-    const newId = await runTransaction(db, async (transaction) => {
-      const counterDoc = await transaction.get(counterRef);
-      
-      let nextNumber = 1;
-      if (counterDoc.exists()) {
-        nextNumber = (counterDoc.data().lastId || 0) + 1;
-      }
-      
-      // Update counter
-      transaction.set(counterRef, { lastId: nextNumber });
-      
-      // Format: MTAI001, MTAI002, etc.
-      return `MTAI${nextNumber.toString().padStart(3, '0')}`;
-    });
+  const newId = await runTransaction(db, async (transaction) => {
+    const counterDoc = await transaction.get(counterRef);
     
-    console.log('✅ [Auth] Generated MTAI ID:', newId);
-    return newId;
-  } catch (error) {
-    console.error('❌ [Auth] Counter transaction failed:', error);
-    throw new Error('Failed to generate user ID. Please try again.');
-  }
+    let nextNumber = 1;
+    if (counterDoc.exists()) {
+      nextNumber = (counterDoc.data().lastId || 0) + 1;
+    }
+    
+    transaction.set(counterRef, { lastId: nextNumber });
+    return `MTAI${nextNumber.toString().padStart(3, '0')}`;
+  });
+  
+  console.log('✅ [Auth] Generated MTAI ID:', newId);
+  return newId;
 };
 
 // ============================================
 // USER LOOKUP
 // ============================================
 
-/**
- * Find existing user by email (for deduplication)
- * 
- * Checks TWO places for backward compatibility:
- * 1. Query users collection where email field matches (new system: users/{mtaiId})
- * 2. Check if document exists with email as ID (old system: users/{email})
- * 
- * If old document found, it will be migrated during saveUserToFirestore
- */
-const findUserByEmail = async (email: string): Promise<{ mtaiId: string; data: FirestoreUser; needsMigration?: boolean } | null> => {
+const findUserByEmail = async (email: string): Promise<{ mtaiId: string; data: FirestoreUser } | null> => {
   try {
-    // 1. First, check NEW system: query by email field
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('email', '==', email));
     const snapshot = await getDocs(q);
     
     if (!snapshot.empty) {
       const docSnap = snapshot.docs[0];
-      console.log('✅ [Auth] Found user in new system:', docSnap.id);
       return {
         mtaiId: docSnap.id,
         data: docSnap.data() as FirestoreUser
       };
     }
     
-    // 2. Check OLD system: document ID is the email
-    const oldUserRef = doc(db, 'users', email);
-    const oldUserSnap = await getDoc(oldUserRef);
-    
-    if (oldUserSnap.exists()) {
-      const oldData = oldUserSnap.data();
-      console.log('📦 [Auth] Found user in OLD system (email as doc ID), needs migration');
-      
-      // Return old data with migration flag
-      return {
-        mtaiId: email, // Temporary - will be replaced during migration
-        data: {
-          uid: oldData.uid || '',
-          mtaiId: oldData.mtaiId || '', // May not exist in old docs
-          email: email,
-          displayName: oldData.displayName || email.split('@')[0],
-          photoURL: oldData.photoURL || null,
-          authProviders: oldData.authProviders || ['google'],
-          createdAt: oldData.createdAt
-        },
-        needsMigration: true
-      };
-    }
-    
-    console.log('🔍 [Auth] No existing user found for:', email);
     return null;
   } catch (error) {
-    console.error('❌ [Auth] Error finding user by email:', error);
-    return null;
-  }
-};
-
-/**
- * Get user by MTAI ID
- */
-const getUserByMtaiId = async (mtaiId: string): Promise<FirestoreUser | null> => {
-  try {
-    const userRef = doc(db, 'users', mtaiId);
-    const userSnap = await getDoc(userRef);
-    
-    if (userSnap.exists()) {
-      return userSnap.data() as FirestoreUser;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('❌ [Auth] Error getting user by MTAI ID:', error);
+    console.error('❌ [Auth] Error finding user:', error);
     return null;
   }
 };
@@ -223,137 +151,89 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Role helpers
+  const isManager = user?.role === 'manager';
+  const isEmployee = user?.role === 'employee';
+
   /**
-   * Create or update user in Firestore
-   * 
-   * LOGIC:
-   * 1. Check if user exists by email (deduplication)
-   * 2. If exists in OLD system (email as doc ID): MIGRATE to new system
-   * 3. If exists in NEW system: merge auth providers, update UID
-   * 4. If new: generate MTAI ID, create document at users/{mtaiId}
+   * Create user in Firestore (for signup)
    */
-  const saveUserToFirestore = useCallback(async (
+  const createUserInFirestore = useCallback(async (
     firebaseUser: FirebaseUser,
-    provider: AuthProviderType
+    provider: AuthProviderType,
+    name: string,
+    role: UserRole
   ): Promise<string> => {
     if (!firebaseUser.email) {
-      throw new Error('Email is required for account creation');
+      throw new Error('Email is required');
     }
 
     const email = firebaseUser.email;
-    console.log('📝 [Auth] Saving user to Firestore:', email, 'provider:', provider);
+    console.log('📝 [Auth] Creating user:', email, 'role:', role);
 
-    // Check if user already exists by email
+    // Check if user already exists
     const existingUser = await findUserByEmail(email);
-
     if (existingUser) {
-      // Check if migration is needed (old system: email as doc ID)
-      if (existingUser.needsMigration) {
-        console.log('🔄 [Auth] Migrating user from old system...');
-        
-        // Generate new MTAI ID
-        const mtaiId = await generateMtaiId();
-        
-        const existingProviders = existingUser.data.authProviders || [];
-        const updatedProviders = existingProviders.includes(provider)
-          ? existingProviders
-          : [...existingProviders, provider];
-        
-        // Create new document with MTAI ID
-        const newUserData: FirestoreUser = {
-          uid: firebaseUser.uid,
-          mtaiId: mtaiId,
-          email: email,
-          displayName: firebaseUser.displayName || existingUser.data.displayName || email.split('@')[0],
-          photoURL: firebaseUser.photoURL || existingUser.data.photoURL || null,
-          authProviders: updatedProviders,
-          createdAt: existingUser.data.createdAt || serverTimestamp(),
-          updatedAt: serverTimestamp()
-        };
-        
-        const newUserRef = doc(db, 'users', mtaiId);
-        await setDoc(newUserRef, newUserData);
-        
-        // Delete old document (email as ID)
-        const oldUserRef = doc(db, 'users', email);
-        try {
-          await deleteDoc(oldUserRef);
-          console.log('🗑️ [Auth] Deleted old document:', email);
-        } catch (deleteError) {
-          console.warn('⚠️ [Auth] Could not delete old document:', deleteError);
-        }
-        
-        console.log('✅ [Auth] User migrated to:', mtaiId);
-        return mtaiId;
-      }
-      
-      // EXISTING USER in NEW system - merge auth providers
-      console.log('👤 [Auth] Existing user found:', existingUser.mtaiId);
-      
-      const existingProviders = existingUser.data.authProviders || [];
-      const updatedProviders = existingProviders.includes(provider)
-        ? existingProviders
-        : [...existingProviders, provider];
-
-      // Update existing document
-      const userRef = doc(db, 'users', existingUser.mtaiId);
-      await setDoc(userRef, {
-        uid: firebaseUser.uid,  // Update to latest UID
-        displayName: firebaseUser.displayName || existingUser.data.displayName,
-        photoURL: firebaseUser.photoURL || existingUser.data.photoURL,
-        authProviders: updatedProviders,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-
-      console.log('✅ [Auth] User updated, providers:', updatedProviders);
-      return existingUser.mtaiId;
-    } else {
-      // NEW USER - generate MTAI ID and create document
-      console.log('🆕 [Auth] Creating new user...');
-      
-      const mtaiId = await generateMtaiId();
-      
-      const userData: FirestoreUser = {
-        uid: firebaseUser.uid,
-        mtaiId: mtaiId,
-        email: email,
-        displayName: firebaseUser.displayName || email.split('@')[0],
-        photoURL: firebaseUser.photoURL || null,
-        authProviders: [provider],
-        createdAt: serverTimestamp()
-      };
-
-      // Create document at users/{mtaiId}
-      const userRef = doc(db, 'users', mtaiId);
-      await setDoc(userRef, userData);
-
-      console.log('✅ [Auth] New user created:', mtaiId);
-      return mtaiId;
+      throw new Error('An account with this email already exists. Please sign in.');
     }
+
+    // Generate new MTAI ID
+    const mtaiId = await generateMtaiId();
+    
+    const userData: FirestoreUser = {
+      uid: firebaseUser.uid,
+      mtaiId: mtaiId,
+      name: name,
+      email: email,
+      role: role,
+      authProviders: [provider],
+      photoURL: firebaseUser.photoURL || null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(doc(db, 'users', mtaiId), userData);
+    console.log('✅ [Auth] User created:', mtaiId, 'role:', role);
+    
+    return mtaiId;
   }, []);
 
   /**
-   * Build User object from Firebase Auth + Firestore
+   * Update existing user (for login)
+   */
+  const updateUserInFirestore = useCallback(async (
+    firebaseUser: FirebaseUser,
+    provider: AuthProviderType,
+    existingUser: { mtaiId: string; data: FirestoreUser }
+  ): Promise<void> => {
+    const existingProviders = existingUser.data.authProviders || [];
+    const updatedProviders = existingProviders.includes(provider)
+      ? existingProviders
+      : [...existingProviders, provider];
+
+    await setDoc(doc(db, 'users', existingUser.mtaiId), {
+      uid: firebaseUser.uid,
+      authProviders: updatedProviders,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  }, []);
+
+  /**
+   * Build User object from Firestore
    */
   const buildUserObject = useCallback(async (firebaseUser: FirebaseUser): Promise<User | null> => {
-    if (!firebaseUser.email) {
-      console.warn('⚠️ [Auth] User has no email');
-      return null;
-    }
+    if (!firebaseUser.email) return null;
 
-    // Find user in Firestore
     const existingUser = await findUserByEmail(firebaseUser.email);
-    
-    if (!existingUser) {
-      console.warn('⚠️ [Auth] User not found in Firestore');
-      return null;
-    }
+    if (!existingUser) return null;
 
     return {
       uid: firebaseUser.uid,
       mtaiId: existingUser.mtaiId,
       email: firebaseUser.email,
-      displayName: existingUser.data.displayName || firebaseUser.email.split('@')[0],
+      name: existingUser.data.name,
+      displayName: existingUser.data.name,
+      role: existingUser.data.role,
       photoURL: existingUser.data.photoURL || null,
       emailVerified: firebaseUser.emailVerified,
       authProviders: existingUser.data.authProviders
@@ -365,142 +245,140 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ============================================
 
   /**
-   * Email/Password Login
+   * Email/Password Login (existing users only)
    */
   const login = useCallback(async (email: string, password: string) => {
     try {
       console.log('🔐 [Auth] Logging in:', email);
+      
+      // Check if user exists first
+      const existingUser = await findUserByEmail(email);
+      if (!existingUser) {
+        throw new Error('No account found with this email. Please sign up first.');
+      }
+      
       const result = await signInWithEmailAndPassword(auth, email, password);
+      await updateUserInFirestore(result.user, 'password', existingUser);
       
-      // Save to Firestore and get MTAI ID
-      const mtaiId = await saveUserToFirestore(result.user, 'password');
-      
-      // Immediately set user state (don't wait for onAuthStateChanged)
       const userObj = await buildUserObject(result.user);
       if (userObj) {
         setUser(userObj);
-        console.log('✅ [Auth] Login successful, user set:', userObj.mtaiId);
+        console.log('✅ [Auth] Login successful:', userObj.mtaiId, 'role:', userObj.role);
       }
     } catch (error: any) {
-      console.error('❌ [Auth] Login error:', error.code);
-      throw new Error(getAuthErrorMessage(error));
+      console.error('❌ [Auth] Login error:', error);
+      if (error.code) {
+        throw new Error(getAuthErrorMessage(error));
+      }
+      throw error;
     }
-  }, [saveUserToFirestore, buildUserObject]);
+  }, [updateUserInFirestore, buildUserObject]);
 
   /**
-   * Email/Password Signup
+   * Email/Password Signup (requires name and role)
    */
-  const signup = useCallback(async (email: string, password: string) => {
+  const signup = useCallback(async (email: string, password: string, name: string, role: UserRole) => {
     try {
-      console.log('📝 [Auth] Creating account:', email);
+      console.log('📝 [Auth] Signing up:', email, 'as', role);
       
-      // Create Firebase Auth account
+      // Check if user already exists
+      const existingUser = await findUserByEmail(email);
+      if (existingUser) {
+        throw new Error('An account with this email already exists. Please sign in.');
+      }
+      
       const result = await createUserWithEmailAndPassword(auth, email, password);
-      console.log('✅ [Auth] Firebase account created');
-
+      
       // Send verification email
       try {
         await sendEmailVerification(result.user);
-        console.log('📧 [Auth] Verification email sent');
-      } catch (emailError: any) {
-        console.warn('⚠️ [Auth] Could not send verification email:', emailError.message);
+      } catch (e) {
+        console.warn('⚠️ Could not send verification email');
       }
 
-      // Create Firestore user document
-      const mtaiId = await saveUserToFirestore(result.user, 'password');
+      // Create Firestore document with role
+      await createUserInFirestore(result.user, 'password', name, role);
       
-      // Immediately set user state
       const userObj = await buildUserObject(result.user);
       if (userObj) {
         setUser(userObj);
-        console.log('✅ [Auth] Signup complete, user set:', userObj.mtaiId);
+        console.log('✅ [Auth] Signup complete:', userObj.mtaiId, 'role:', userObj.role);
       }
     } catch (error: any) {
-      console.error('❌ [Auth] Signup error:', error.code);
-      throw new Error(getAuthErrorMessage(error));
+      console.error('❌ [Auth] Signup error:', error);
+      if (error.code) {
+        throw new Error(getAuthErrorMessage(error));
+      }
+      throw error;
     }
-  }, [saveUserToFirestore, buildUserObject]);
+  }, [createUserInFirestore, buildUserObject]);
 
   /**
-   * Google OAuth Login
+   * Google Login/Signup (requires name and role for new users)
    */
-  const googleLogin = useCallback(async () => {
+  const googleLogin = useCallback(async (name: string, role: UserRole) => {
     try {
-      console.log('🔵 [Auth] Starting Google sign-in...');
+      console.log('🔵 [Auth] Google sign-in...');
       const result = await signInWithPopup(auth, googleProvider);
       
-      // Create/update Firestore user document
-      const mtaiId = await saveUserToFirestore(result.user, 'google');
+      const existingUser = await findUserByEmail(result.user.email!);
       
-      // Immediately set user state
+      if (existingUser) {
+        // Existing user - just update
+        await updateUserInFirestore(result.user, 'google', existingUser);
+      } else {
+        // New user - create with role
+        const displayName = name || result.user.displayName || result.user.email!.split('@')[0];
+        await createUserInFirestore(result.user, 'google', displayName, role);
+      }
+      
       const userObj = await buildUserObject(result.user);
       if (userObj) {
         setUser(userObj);
-        console.log('✅ [Auth] Google sign-in successful, user set:', userObj.mtaiId);
+        console.log('✅ [Auth] Google sign-in complete:', userObj.mtaiId, 'role:', userObj.role);
       }
     } catch (error: any) {
-      console.error('❌ [Auth] Google sign-in error:', error.code);
-      throw new Error(getAuthErrorMessage(error));
+      console.error('❌ [Auth] Google error:', error);
+      if (error.code) {
+        throw new Error(getAuthErrorMessage(error));
+      }
+      throw error;
     }
-  }, [saveUserToFirestore, buildUserObject]);
+  }, [createUserInFirestore, updateUserInFirestore, buildUserObject]);
 
   /**
    * Sign out
    */
   const logout = useCallback(async () => {
-    try {
-      await firebaseSignOut(auth);
-      console.log('👋 [Auth] Signed out');
-    } catch (error: any) {
-      console.error('❌ [Auth] Sign out error:', error.code);
-      throw new Error('Failed to sign out. Please try again.');
-    }
+    await firebaseSignOut(auth);
+    setUser(null);
+    console.log('👋 [Auth] Signed out');
   }, []);
 
   /**
    * Send verification email
    */
   const sendVerificationEmail = useCallback(async () => {
-    if (!auth.currentUser) {
-      throw new Error('You must be signed in to send a verification email.');
-    }
-
-    if (auth.currentUser.emailVerified) {
-      throw new Error('Your email is already verified.');
-    }
-
-    try {
-      await sendEmailVerification(auth.currentUser);
-      console.log('📧 [Auth] Verification email sent');
-    } catch (error: any) {
-      console.error('❌ [Auth] Verification email error:', error.code);
-      throw new Error(getAuthErrorMessage(error));
-    }
+    if (!auth.currentUser) throw new Error('You must be signed in.');
+    if (auth.currentUser.emailVerified) throw new Error('Email already verified.');
+    await sendEmailVerification(auth.currentUser);
   }, []);
 
   /**
-   * Send password reset email
+   * Send password reset
    */
   const sendPasswordReset = useCallback(async (email: string) => {
-    try {
-      console.log('🔑 [Auth] Sending password reset email:', email);
-      await sendPasswordResetEmail(auth, email);
-      console.log('📧 [Auth] Password reset email sent');
-    } catch (error: any) {
-      console.error('❌ [Auth] Password reset error:', error.code);
-      throw new Error(getAuthErrorMessage(error));
-    }
+    await sendPasswordResetEmail(auth, email);
   }, []);
 
   /**
-   * Refresh user data
+   * Refresh user
    */
   const refreshUser = useCallback(async () => {
     if (auth.currentUser) {
       await auth.currentUser.reload();
       const userObj = await buildUserObject(auth.currentUser);
       setUser(userObj);
-      console.log('🔄 [Auth] User refreshed');
     }
   }, [buildUserObject]);
 
@@ -509,37 +387,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ============================================
 
   useEffect(() => {
-    console.log('🔍 [Auth] Setting up auth listener...');
-    
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        console.log('👤 [Auth] User signed in:', firebaseUser.email);
-        
-        // Build user object from Firestore
         const userObj = await buildUserObject(firebaseUser);
-        
-        if (userObj) {
-          setUser(userObj);
-          console.log('✅ [Auth] User loaded:', userObj.mtaiId);
-        } else {
-          // User exists in Firebase but not Firestore - this shouldn't happen
-          // but handle it gracefully by setting null
-          console.warn('⚠️ [Auth] User not in Firestore');
-          setUser(null);
-        }
+        setUser(userObj);
       } else {
-        console.log('👤 [Auth] No user signed in');
         setUser(null);
       }
-      
       setLoading(false);
-      console.log('✅ [Auth] Auth loading complete');
     });
 
-    return () => {
-      console.log('🧹 [Auth] Cleaning up auth listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [buildUserObject]);
 
   // ============================================
@@ -555,7 +413,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logout,
     sendVerificationEmail,
     sendPasswordReset,
-    refreshUser
+    refreshUser,
+    isManager,
+    isEmployee
   };
 
   return (

@@ -1,19 +1,17 @@
 /**
- * TasksPage - Client Dashboard for Assigned Tasks
+ * TasksPage.tsx - Employee Task View
  * 
- * Shows all tasks assigned to the current user across all meetings.
- * Allows status updates, comments, and file uploads.
+ * EMPLOYEES ONLY - Shows tasks assigned to the current employee.
+ * Allows employees to:
+ * - View assigned tasks
+ * - Update task status
+ * - Submit work (text response + file upload)
  * 
- * Features:
- * - Filter by status (All, Pending, In Progress, Completed, Blocked)
- * - Sort by priority (Critical → Low)
- * - Search tasks
- * - Update status inline
- * - Add comments/updates
- * - Real-time sync with Firestore
+ * Managers should use TaskManagerPage instead.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   collection, 
   query, 
@@ -30,14 +28,6 @@ import { useAuth } from '../contexts/AuthContext';
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
 type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 
-interface TaskUpdate {
-  id: string;
-  type: string;
-  content: string;
-  userName: string;
-  createdAt: string;
-}
-
 interface Task {
   id: string;
   meetingId: string;
@@ -50,10 +40,18 @@ interface Task {
   priority: TaskPriority;
   status: TaskStatus;
   dueDate?: string;
-  updates?: TaskUpdate[];
+  submissionText?: string;
+  submissionFileUrl?: string;
+  submissionFileName?: string;
+  submittedAt?: string;
   createdAt?: string;
-  updatedAt?: string;
 }
+
+// ============================================
+// CLOUDINARY CONFIG
+// ============================================
+const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'demo';
+const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
 
 // ============================================
 // HELPERS
@@ -72,7 +70,6 @@ const formatDate = (dateStr: string | Timestamp | undefined): string => {
     if (date.toDateString() === today.toDateString()) return 'Today';
     if (date.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
     
-    // Check if overdue
     if (date < today) {
       const daysAgo = Math.floor((today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
       return `${daysAgo} days overdue`;
@@ -94,15 +91,15 @@ const priorityOrder: Record<TaskPriority, number> = {
 const priorityColors: Record<TaskPriority, string> = {
   critical: 'bg-red-100 text-red-700 border-red-200',
   high: 'bg-orange-100 text-orange-700 border-orange-200',
-  medium: 'bg-amber-100 text-amber-700 border-amber-200',
+  medium: 'bg-blue-100 text-blue-700 border-blue-200',
   low: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
 const statusColors: Record<TaskStatus, string> = {
-  pending: 'bg-slate-100 text-slate-600',
+  pending: 'bg-amber-100 text-amber-700',
   in_progress: 'bg-blue-100 text-blue-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  blocked: 'bg-rose-100 text-rose-700',
+  completed: 'bg-green-100 text-green-700',
+  blocked: 'bg-red-100 text-red-700',
 };
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -118,59 +115,102 @@ const statusLabels: Record<TaskStatus, string> = {
 interface TaskCardProps {
   task: Task;
   onStatusChange: (taskId: string, newStatus: TaskStatus) => void;
-  onAddComment: (taskId: string, comment: string) => void;
+  onSubmit: (taskId: string, text: string, fileUrl?: string, fileName?: string) => void;
   updating: boolean;
 }
 
-const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onAddComment, updating }) => {
+const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, updating }) => {
   const [expanded, setExpanded] = useState(false);
-  const [comment, setComment] = useState('');
-  const [showCommentInput, setShowCommentInput] = useState(false);
-
-  const handleStatusChange = (newStatus: TaskStatus) => {
-    if (newStatus !== task.status) {
-      onStatusChange(task.id, newStatus);
-    }
-  };
-
-  const handleSubmitComment = () => {
-    if (comment.trim()) {
-      onAddComment(task.id, comment.trim());
-      setComment('');
-      setShowCommentInput(false);
-    }
-  };
+  const [submissionText, setSubmissionText] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<{ url: string; name: string } | null>(null);
+  const [showSubmitForm, setShowSubmitForm] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed';
+  const hasSubmission = task.submissionText || task.submissionFileUrl;
+
+  // Handle file upload to Cloudinary
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (max 50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      setSubmitError('File size must be less than 50MB');
+      return;
+    }
+
+    setUploading(true);
+    setSubmitError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+      formData.append('folder', 'task-submissions');
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
+        { method: 'POST', body: formData }
+      );
+
+      if (!response.ok) throw new Error('Upload failed');
+
+      const data = await response.json();
+      setUploadedFile({
+        url: data.secure_url,
+        name: file.name,
+      });
+    } catch (err: any) {
+      console.error('Upload error:', err);
+      setSubmitError('Failed to upload file. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  // Handle submission
+  const handleSubmit = useCallback(() => {
+    if (!submissionText.trim() && !uploadedFile) {
+      setSubmitError('Please provide a response or upload a file');
+      return;
+    }
+
+    onSubmit(
+      task.id,
+      submissionText.trim(),
+      uploadedFile?.url,
+      uploadedFile?.name
+    );
+
+    // Reset form
+    setSubmissionText('');
+    setUploadedFile(null);
+    setShowSubmitForm(false);
+  }, [task.id, submissionText, uploadedFile, onSubmit]);
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm transition-all ${
-      isOverdue ? 'border-rose-200' : 'border-slate-200'
+      isOverdue ? 'border-rose-200' : hasSubmission ? 'border-green-200' : 'border-slate-200'
     } ${expanded ? 'ring-2 ring-indigo-100' : ''}`}>
-      {/* Main Card Content */}
       <div className="p-5">
         <div className="flex items-start justify-between gap-4">
-          {/* Left side - Status + Content */}
           <div className="flex items-start gap-4 flex-1 min-w-0">
             {/* Status dropdown */}
-            <div className="relative">
-              <select
-                value={task.status}
-                onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
-                disabled={updating}
-                className={`appearance-none w-32 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${statusColors[task.status]} ${
-                  updating ? 'opacity-50 cursor-wait' : ''
-                }`}
-              >
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="blocked">Blocked</option>
-              </select>
-              <span className="material-icons absolute right-2 top-1/2 -translate-y-1/2 text-xs pointer-events-none">
-                expand_more
-              </span>
-            </div>
+            <select
+              value={task.status}
+              onChange={(e) => onStatusChange(task.id, e.target.value as TaskStatus)}
+              disabled={updating || task.status === 'completed'}
+              className={`appearance-none w-32 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${statusColors[task.status]} ${
+                updating ? 'opacity-50 cursor-wait' : ''
+              }`}
+            >
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+              <option value="blocked">Blocked</option>
+            </select>
 
             {/* Task content */}
             <div className="flex-1 min-w-0">
@@ -183,12 +223,10 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onAddComment,
               )}
 
               <div className="flex flex-wrap items-center gap-3 mt-3">
-                {/* Priority badge */}
                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${priorityColors[task.priority]}`}>
                   {task.priority}
                 </span>
 
-                {/* Due date */}
                 {task.dueDate && (
                   <span className={`text-xs flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
                     <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'event'}</span>
@@ -196,26 +234,25 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onAddComment,
                   </span>
                 )}
 
-                {/* Meeting source */}
-                {task.meetingTitle && (
-                  <span className="text-xs text-slate-400 flex items-center gap-1">
-                    <span className="material-icons text-[14px]">video_call</span>
-                    {task.meetingTitle}
+                {task.creatorName && (
+                  <span className="text-xs text-slate-400">
+                    From: {task.creatorName}
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Right side - Actions */}
+          {/* Actions */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowCommentInput(!showCommentInput)}
-              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition"
-              title="Add comment"
-            >
-              <span className="material-icons text-[20px]">comment</span>
-            </button>
+            {!hasSubmission && task.status !== 'completed' && (
+              <button
+                onClick={() => setShowSubmitForm(!showSubmitForm)}
+                className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-sm font-medium transition"
+              >
+                Submit Work
+              </button>
+            )}
             <button
               onClick={() => setExpanded(!expanded)}
               className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition"
@@ -227,58 +264,121 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onAddComment,
           </div>
         </div>
 
-        {/* Comment input */}
-        {showCommentInput && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Add an update or comment..."
-                className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                onKeyDown={(e) => e.key === 'Enter' && handleSubmitComment()}
-              />
-              <button
-                onClick={handleSubmitComment}
-                disabled={!comment.trim() || updating}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        {/* Existing submission */}
+        {hasSubmission && (
+          <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="material-icons text-green-600 text-sm">check_circle</span>
+              <span className="text-sm font-semibold text-green-700">Your Submission</span>
+            </div>
+            {task.submissionText && (
+              <p className="text-sm text-green-800">{task.submissionText}</p>
+            )}
+            {task.submissionFileUrl && (
+              <a
+                href={task.submissionFileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
               >
-                Send
+                <span className="material-icons text-sm">attach_file</span>
+                {task.submissionFileName || 'View attachment'}
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Submit form */}
+        {showSubmitForm && !hasSubmission && (
+          <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Submit Your Work</h4>
+            
+            {submitError && (
+              <div className="mb-3 p-2 bg-red-50 border border-red-100 rounded-lg">
+                <p className="text-sm text-red-700">{submitError}</p>
+              </div>
+            )}
+
+            <textarea
+              value={submissionText}
+              onChange={(e) => setSubmissionText(e.target.value)}
+              placeholder="Describe what you've done, provide links, or explain your solution..."
+              rows={3}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+            />
+
+            {/* File upload */}
+            <div className="mt-3">
+              {!uploadedFile ? (
+                <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition">
+                  <span className="material-icons text-slate-400">upload_file</span>
+                  <span className="text-sm text-slate-600">
+                    {uploading ? 'Uploading...' : 'Attach file (optional)'}
+                  </span>
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    disabled={uploading}
+                    className="hidden"
+                    accept="*/*"
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                  <span className="material-icons text-green-600 text-sm">check_circle</span>
+                  <span className="text-sm text-green-700 flex-1 truncate">{uploadedFile.name}</span>
+                  <button
+                    onClick={() => setUploadedFile(null)}
+                    className="text-green-600 hover:text-green-800"
+                  >
+                    <span className="material-icons text-sm">close</span>
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-slate-500 mt-1">
+                Supports any file type including ZIP. Max 50MB.
+              </p>
+            </div>
+
+            {/* Submit button */}
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={handleSubmit}
+                disabled={updating || uploading || (!submissionText.trim() && !uploadedFile)}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+              >
+                {updating ? 'Submitting...' : 'Submit'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowSubmitForm(false);
+                  setSubmissionText('');
+                  setUploadedFile(null);
+                  setSubmitError('');
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition"
+              >
+                Cancel
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Expanded - Updates/Activity */}
-      {expanded && task.updates && task.updates.length > 0 && (
+      {/* Expanded details */}
+      {expanded && (
         <div className="px-5 pb-5 border-t border-slate-100">
-          <h4 className="text-xs font-semibold text-slate-500 uppercase mt-4 mb-3">Activity</h4>
-          <div className="space-y-3">
-            {task.updates.slice().reverse().slice(0, 5).map((update, idx) => (
-              <div key={update.id || idx} className="flex items-start gap-3 text-sm">
-                <div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <span className="material-icons text-[14px] text-slate-500">
-                    {update.type === 'status_change' ? 'sync' : update.type === 'file_upload' ? 'attach_file' : 'chat'}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-slate-700">
-                    <span className="font-medium">{update.userName}</span>
-                    {' '}{update.content}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {new Date(update.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })}
-                  </p>
-                </div>
-              </div>
-            ))}
+          <div className="mt-4 space-y-2">
+            {task.meetingTitle && (
+              <p className="text-sm text-slate-600">
+                <span className="font-medium">Meeting:</span> {task.meetingTitle}
+              </p>
+            )}
+            {task.createdAt && (
+              <p className="text-sm text-slate-500">
+                <span className="font-medium">Assigned:</span> {formatDate(task.createdAt)}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -290,7 +390,8 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onAddComment,
 // MAIN COMPONENT
 // ============================================
 const TasksPage: React.FC = () => {
-  const { user, loading: authLoading } = useAuth();
+  const { user, isEmployee, isManager, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -299,29 +400,30 @@ const TasksPage: React.FC = () => {
   // Filters
   const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'priority' | 'dueDate' | 'created'>('priority');
 
-  // Fetch tasks assigned to current user
+  // Redirect managers to TaskManager
   useEffect(() => {
-    if (authLoading) {
-      setLoading(true);
-      return;
+    if (!authLoading && isManager) {
+      navigate('/task-manager');
     }
+  }, [authLoading, isManager, navigate]);
 
-    // Get MTAI ID from user object (extended by AuthContext)
-    const mtaiId = (user as any)?.mtaiId;
+  // Fetch tasks assigned to current employee
+  useEffect(() => {
+    if (authLoading || !user) return;
+
+    const mtaiId = user.mtaiId;
     
     if (!mtaiId) {
-      console.log('[TasksPage] No MTAI ID, showing empty state');
+      console.log('[TasksPage] No MTAI ID');
       setTasks([]);
       setLoading(false);
       return;
     }
 
-    console.log('[TasksPage] Setting up listener for MTAI ID:', mtaiId);
+    console.log('[TasksPage] Loading tasks for:', mtaiId);
     setLoading(true);
 
-    // Query tasks assigned to this user by MTAI ID
     const tasksQuery = query(
       collection(db, 'tasks'),
       where('assignedTo', '==', mtaiId)
@@ -345,33 +447,32 @@ const TasksPage: React.FC = () => {
             priority: data.priority || 'medium',
             status: data.status || 'pending',
             dueDate: data.dueDate,
-            updates: data.updates || [],
+            submissionText: data.submissionText,
+            submissionFileUrl: data.submissionFileUrl,
+            submissionFileName: data.submissionFileName,
+            submittedAt: data.submittedAt?.toDate?.()?.toISOString(),
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
-            updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
           });
         });
 
-        console.log('[TasksPage] Tasks loaded:', tasksData.length);
+        // Sort by priority
+        tasksData.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
         setTasks(tasksData);
         setLoading(false);
-        setError(null);
       },
       (err) => {
         console.error('[TasksPage] Error:', err);
-        if (err.code === 'permission-denied') {
-          setTasks([]);
-        } else {
-          setError('Failed to load tasks');
-        }
+        setError('Failed to load tasks');
         setLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, [(user as any)?.mtaiId, authLoading]);
+  }, [user?.mtaiId, authLoading]);
 
   // Handle status change
-  const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
+  const handleStatusChange = useCallback(async (taskId: string, newStatus: TaskStatus) => {
     setUpdating(true);
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -394,24 +495,22 @@ const TasksPage: React.FC = () => {
         const error = await res.json();
         throw new Error(error.error || 'Failed to update status');
       }
-
-      console.log('[TasksPage] Status updated');
     } catch (err: any) {
       console.error('[TasksPage] Status update error:', err);
       setError(err.message);
     } finally {
       setUpdating(false);
     }
-  };
+  }, []);
 
-  // Handle add comment
-  const handleAddComment = async (taskId: string, comment: string) => {
+  // Handle submission
+  const handleSubmit = useCallback(async (taskId: string, text: string, fileUrl?: string, fileName?: string) => {
     setUpdating(true);
     try {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Not authenticated');
 
-      const res = await fetch('/api/update-task', {
+      const res = await fetch('/api/submit-task', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -419,48 +518,32 @@ const TasksPage: React.FC = () => {
         },
         body: JSON.stringify({
           taskId,
-          action: 'comment',
-          comment,
+          submissionText: text,
+          submissionFileUrl: fileUrl,
+          submissionFileName: fileName,
         }),
       });
 
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.error || 'Failed to add comment');
+        throw new Error(error.error || 'Failed to submit');
       }
-
-      console.log('[TasksPage] Comment added');
     } catch (err: any) {
-      console.error('[TasksPage] Comment error:', err);
+      console.error('[TasksPage] Submit error:', err);
       setError(err.message);
     } finally {
       setUpdating(false);
     }
-  };
+  }, []);
 
-  // Filter and sort tasks
+  // Filter tasks
   const filteredTasks = tasks
     .filter(t => statusFilter === 'all' || t.status === statusFilter)
     .filter(t => 
       !searchQuery || 
       t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.meetingTitle?.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-    .sort((a, b) => {
-      if (sortBy === 'priority') {
-        return priorityOrder[a.priority] - priorityOrder[b.priority];
-      }
-      if (sortBy === 'dueDate') {
-        if (!a.dueDate) return 1;
-        if (!b.dueDate) return -1;
-        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-      }
-      // Default: created date
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
-    });
+      t.description.toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
   // Stats
   const stats = {
@@ -468,42 +551,45 @@ const TasksPage: React.FC = () => {
     pending: tasks.filter(t => t.status === 'pending').length,
     inProgress: tasks.filter(t => t.status === 'in_progress').length,
     completed: tasks.filter(t => t.status === 'completed').length,
-    blocked: tasks.filter(t => t.status === 'blocked').length,
   };
 
+  // Loading state
+  if (authLoading || loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900">My Tasks</h1>
-        <p className="text-slate-500">Tasks assigned to you from meetings</p>
+        <p className="text-slate-500 mt-1">Tasks assigned to you by managers</p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-2xl font-bold text-amber-600">{stats.pending}</p>
           <p className="text-sm text-slate-500">Pending</p>
-          <p className="text-2xl font-bold text-slate-900">{stats.pending}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200">
-          <p className="text-sm text-slate-500">In Progress</p>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <p className="text-2xl font-bold text-blue-600">{stats.inProgress}</p>
+          <p className="text-sm text-slate-500">In Progress</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
           <p className="text-sm text-slate-500">Completed</p>
-          <p className="text-2xl font-bold text-emerald-600">{stats.completed}</p>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200">
-          <p className="text-sm text-slate-500">Blocked</p>
-          <p className="text-2xl font-bold text-rose-600">{stats.blocked}</p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-between">
-        {/* Status tabs */}
-        <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
-          {(['all', 'pending', 'in_progress', 'completed', 'blocked'] as const).map((status) => (
+      <div className="flex flex-wrap gap-3 justify-between">
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+          {(['all', 'pending', 'in_progress', 'completed'] as const).map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -517,69 +603,40 @@ const TasksPage: React.FC = () => {
             </button>
           ))}
         </div>
-
-        {/* Search and Sort */}
-        <div className="flex gap-2">
-          <div className="relative">
-            <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
-            <input
-              type="text"
-              placeholder="Search tasks..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm w-48 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="priority">Sort by Priority</option>
-            <option value="dueDate">Sort by Due Date</option>
-            <option value="created">Sort by Created</option>
-          </select>
+        
+        <div className="relative">
+          <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+          <input
+            type="text"
+            placeholder="Search tasks..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm w-48 focus:ring-2 focus:ring-indigo-500"
+          />
         </div>
       </div>
 
-      {/* Error Banner */}
+      {/* Error */}
       {error && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="material-icons">error</span>
-            <span>{error}</span>
-          </div>
-          <button onClick={() => setError(null)} className="text-rose-500 hover:text-rose-700">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)}>
             <span className="material-icons">close</span>
           </button>
         </div>
       )}
 
       {/* Tasks List */}
-      {loading ? (
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white p-6 rounded-2xl border border-slate-200 animate-pulse">
-              <div className="flex gap-4">
-                <div className="w-24 h-8 bg-slate-100 rounded-lg"></div>
-                <div className="flex-1 space-y-3">
-                  <div className="h-5 bg-slate-100 rounded w-2/3"></div>
-                  <div className="h-4 bg-slate-100 rounded w-1/2"></div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : filteredTasks.length === 0 ? (
-        <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center">
-          <span className="material-icons text-slate-300 text-5xl mb-4">assignment</span>
-          <h3 className="font-bold text-slate-900 mb-2">
-            {tasks.length === 0 ? 'No tasks assigned to you' : 'No matching tasks'}
+      {filteredTasks.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+          <span className="material-icons text-5xl text-slate-300 mb-4">task_alt</span>
+          <h3 className="text-lg font-semibold text-slate-700 mb-2">
+            {tasks.length === 0 ? 'No tasks yet' : 'No matching tasks'}
           </h3>
           <p className="text-slate-500">
             {tasks.length === 0 
-              ? 'Tasks will appear here when someone assigns them to you from a meeting'
-              : 'Try adjusting your filters'}
+              ? 'Tasks will appear here when a manager assigns them to you.'
+              : 'Try adjusting your filters.'}
           </p>
         </div>
       ) : (
@@ -589,7 +646,7 @@ const TasksPage: React.FC = () => {
               key={task.id}
               task={task}
               onStatusChange={handleStatusChange}
-              onAddComment={handleAddComment}
+              onSubmit={handleSubmit}
               updating={updating}
             />
           ))}

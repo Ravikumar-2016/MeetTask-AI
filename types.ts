@@ -1,15 +1,22 @@
 /**
  * types.ts - Core type definitions for MeetTask AI
  * 
- * USER SYSTEM:
- * - Firebase Auth = authentication only
- * - Firestore users/{mtaiId} = user database
- * - Human-readable IDs: MTAI001, MTAI002, etc.
+ * SIMPLIFIED ARCHITECTURE (v2):
+ * - Two roles: Manager and Employee
+ * - Manager: Creates meetings, uploads, assigns tasks manually
+ * - Employee: Views tasks, submits work, views transcripts
+ * - NO AI task extraction - manual task creation only
+ * - AssemblyAI for transcription only
  */
 
 // ============================================
 // USER TYPES
 // ============================================
+
+/**
+ * User roles - strictly enforced
+ */
+export type UserRole = 'manager' | 'employee';
 
 /**
  * Auth provider types
@@ -21,14 +28,16 @@ export type AuthProvider = 'google' | 'password';
  * This is the source of truth for user data
  */
 export interface FirestoreUser {
-  uid: string;                    // Firebase Auth UID (for auth verification)
-  mtaiId: string;                 // Human-readable ID: MTAI001, MTAI002, etc.
-  displayName: string;            // User's display name
-  email: string;                  // Email address (unique, used for deduplication)
-  authProviders: AuthProvider[];  // ['google'], ['password'], or ['google', 'password']
-  photoURL?: string | null;       // Profile photo URL
-  createdAt?: any;                // Firestore Timestamp (optional - set on creation)
-  updatedAt?: any;                // Firestore Timestamp
+  uid: string;                     // Firebase Auth UID (for auth verification)
+  mtaiId: string;                  // Human-readable ID: MTAI001, MTAI002, etc.
+  name?: string;                   // User's full name
+  displayName?: string;            // Alias for backward compatibility
+  email: string;                   // Email address (unique, used for deduplication)
+  role?: UserRole;                 // 'manager' or 'employee'
+  authProviders?: AuthProvider[];  // ['google'], ['password'], or ['google', 'password']
+  photoURL?: string | null;        // Profile photo URL
+  createdAt?: any;                 // Firestore Timestamp
+  updatedAt?: any;                 // Firestore Timestamp
 }
 
 /**
@@ -39,7 +48,9 @@ export interface User {
   uid: string;
   mtaiId: string;
   email: string;
-  displayName: string;
+  name: string;
+  displayName: string;            // Alias for name (backward compatibility)
+  role: UserRole;
   photoURL: string | null;
   emailVerified: boolean;
   authProviders: AuthProvider[];
@@ -49,17 +60,25 @@ export interface User {
 // MEETING TYPES
 // ============================================
 
-export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'analyzing' | 'completed' | 'error';
+export type MeetingStatus = 'uploaded' | 'processing' | 'transcribing' | 'needs_mapping' | 'completed' | 'error';
 export type FileType = 'video' | 'audio';
-export type TaskPriority = 'high' | 'medium' | 'low';
-export type TaskStatus = 'pending' | 'completed' | 'overdue';
 
 /**
  * Speaker mapping: { "A": "MTAI001", "B": "MTAI002" }
- * Maps diarization speaker labels to MTAI IDs
+ * Maps diarization speaker labels to employee MTAI IDs
  */
 export interface SpeakerMapping {
-  [speakerId: string]: string; // speakerId → mtaiId
+  [speakerId: string]: string; // speakerId → mtaiId (employees only)
+}
+
+/**
+ * Meeting participant (employee)
+ */
+export interface MeetingParticipant {
+  mtaiId: string;
+  name: string;
+  email: string;
+  speakerId: string;              // A, B, C, etc.
 }
 
 export interface Meeting {
@@ -71,20 +90,30 @@ export interface Meeting {
   fileUrl?: string;
   audioUrl?: string;
   videoUrl?: string;
-  userId: string;                  // Owner's Firebase UID
-  ownerMtaiId?: string;            // Owner's MTAI ID
-  taskCount?: number;
-  errorMessage?: string;
+  
+  // Owner (Manager who created)
+  userId: string;                  // Manager's Firebase UID
+  creatorMtaiId?: string;          // Manager's MTAI ID
+  creatorName?: string;            // Manager's name
+  
+  // Participants (Employees)
+  participants?: MeetingParticipant[];
+  
+  // Transcription
   transcriptId?: string;           // AssemblyAI transcript ID
-  createdAt?: string;
-  updatedAt?: string;
-  // Speaker diarization fields
+  duration?: number;
+  
+  // Speaker diarization
   speakerCount?: number;
   speakers?: string[];             // ["A", "B", "C"] - from diarization
   speakerMapping?: SpeakerMapping; // Manual mapping: A → MTAI001
   speakerMappingComplete?: boolean;
-  summary?: string;
-  duration?: number;
+  
+  // Metadata
+  taskCount?: number;              // Manual task count
+  errorMessage?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 // ============================================
@@ -103,111 +132,83 @@ export interface Transcript {
   meetingId: string;
   userId: string;
   text: string;
-  formattedTranscript?: string;    // Transcript with real speaker names
+  formattedTranscript?: string;    // Transcript with speaker labels
   wordCount?: number;
-  summary?: string;
   confidence?: number;
   duration?: number;
+  
   // Speaker diarization data
   utterances?: SpeakerUtterance[];
   speakerMapping?: SpeakerMapping;
   speakerCount?: number;
   speakers?: string[];
-  // Multi-modal analysis
-  videoAnalysisUsed?: boolean;
-  ocrSource?: boolean;             // True if from image OCR
-  createdAt?: string;
+  
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 // ============================================
-// TASK TYPES
+// TASK TYPES (Manual Creation by Manager)
 // ============================================
 
-/**
- * Task priority levels - for sorting and visual indicators
- */
-export type TaskPriorityExtended = 'critical' | 'high' | 'medium' | 'low';
+export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
+export type TaskPriorityExtended = TaskPriority;  // Alias for backward compatibility
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
+export type TaskStatusExtended = TaskStatus;       // Alias for backward compatibility
 
 /**
- * Task status for tracking progress
+ * Task submission by employee
  */
-export type TaskStatusExtended = 'pending' | 'in_progress' | 'completed' | 'blocked';
-
-/**
- * Task update entry - for progress tracking
- */
-export interface TaskUpdate {
+export interface TaskSubmission {
   id: string;
   taskId: string;
-  userId: string;              // Who made the update (MTAI ID)
-  userName: string;
-  type: 'status_change' | 'comment' | 'file_upload';
-  content: string;             // Comment text or status change description
-  previousStatus?: TaskStatusExtended;
-  newStatus?: TaskStatusExtended;
-  fileUrl?: string;            // For file uploads
+  submittedBy: string;             // Employee MTAI ID
+  submittedByName: string;
+  type: 'text' | 'file' | 'status_change';
+  content?: string;                // Text response
+  fileUrl?: string;                // Cloudinary URL
   fileName?: string;
-  createdAt?: string;
+  fileType?: string;               // mime type
+  previousStatus?: TaskStatus;
+  newStatus?: TaskStatus;
+  createdAt?: any;
 }
 
 /**
- * Full Task interface for enterprise task tracking
+ * Task - manually created by manager
  */
 export interface Task {
   id: string;
   meetingId: string;
-  meetingTitle?: string;       // Denormalized for easy display
+  meetingTitle?: string;
   
-  // Ownership
-  creatorId: string;           // Meeting owner's Firebase UID
-  creatorMtaiId?: string;      // Meeting owner's MTAI ID
+  // Creator (Manager) - optional for queries that don't need it
+  creatorId?: string;              // Manager's Firebase UID
+  creatorMtaiId?: string;          // Manager's MTAI ID
+  creatorName?: string;            // Manager's name
   
-  // Assignment
-  assignedTo: string;          // Assigned user's MTAI ID
-  assignedToName: string;      // Display name
-  assignedToEmail: string;     // Email for notifications
-  speakerId?: string;          // Speaker label from diarization (A, B, C)
+  // Assignee (Employee)
+  assignedTo: string;              // Employee's MTAI ID
+  assignedToName?: string;         // Employee's name
+  assignedToEmail?: string;        // Employee's email
   
   // Task details
   title: string;
-  description: string;
-  priority: TaskPriorityExtended;
-  status: TaskStatusExtended;
-  dueDate?: string;            // ISO date string
+  description?: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  dueDate?: string | null;         // YYYY-MM-DD format
   
-  // Progress tracking
-  updates?: TaskUpdate[];      // Array of updates/comments
-  lastUpdateAt?: string;
-  
-  // AI extraction metadata
-  confidence?: number;         // 0.0 - 1.0 confidence in assignment
-  sourceSentence?: string;     // Original quote from transcript
-  
-  // Notification tracking
-  emailSent?: boolean;
-  emailSentAt?: string;
+  // Employee Submission
+  submissionText?: string | null;
+  submissionFileUrl?: string | null;
+  submissionFileName?: string | null;
+  submittedAt?: any;
   
   // Timestamps
-  createdAt?: string;
-  updatedAt?: string;
-  completedAt?: string;
-  
-  // Legacy fields (for backward compatibility)
-  userId?: string;             // Alias for creatorId
-  owner?: string;              // Alias for assignedToName
-  deadline?: string;           // Alias for dueDate
-  completed?: boolean;         // Derived from status
-}
-
-// ============================================
-// DASHBOARD TYPES
-// ============================================
-
-export interface DashboardStats {
-  totalMeetings: number;
-  pendingTasks: number;
-  completedTasks: number;
-  overdueTasks: number;
+  createdAt?: any;
+  updatedAt?: any;
+  completedAt?: any;
 }
 
 // ============================================
@@ -219,7 +220,6 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   message?: string;
-  details?: string;
 }
 
 export interface CreateMeetingResponse {
@@ -227,16 +227,27 @@ export interface CreateMeetingResponse {
   meeting: Meeting;
 }
 
-export interface TranscribeResponse {
+export interface CreateTaskResponse {
   success: boolean;
-  meetingId: string;
-  transcript: string;
-  wordCount: number;
+  task: Task;
 }
 
-export interface ExtractTasksResponse {
-  success: boolean;
-  meetingId: string;
-  taskCount: number;
-  tasks: Task[];
+// ============================================
+// DASHBOARD TYPES
+// ============================================
+
+export interface ManagerDashboardStats {
+  totalMeetings: number;
+  completedMeetings: number;
+  totalTasks: number;
+  pendingTasks: number;
+  completedTasks: number;
+}
+
+export interface EmployeeDashboardStats {
+  assignedTasks: number;
+  pendingTasks: number;
+  inProgressTasks: number;
+  completedTasks: number;
+  meetingsParticipated: number;
 }

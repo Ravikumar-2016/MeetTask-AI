@@ -23,7 +23,7 @@ const SidebarLink: React.FC<{ to: string; label: string; icon: string }> = ({ to
 };
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isManager, isEmployee } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -34,6 +34,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       console.error('Logout error', error);
     }
   };
+
+  // Get display name
+  const displayName = user?.name || user?.displayName || user?.email?.split('@')[0] || 'User';
+  const roleLabel = isManager ? 'Manager' : isEmployee ? 'Employee' : '';
 
   return (
     <div className="flex min-h-screen bg-slate-50">
@@ -50,24 +54,38 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         <nav className="flex-1 px-4 space-y-2 mt-4">
           <SidebarLink to="/dashboard" label="Dashboard" icon="dashboard" />
-          <SidebarLink to="/meetings" label="Meetings" icon="video_call" />
-          <SidebarLink to="/tasks" label="My Tasks" icon="assignment" />
-          <SidebarLink to="/manager" label="Task Manager" icon="supervisor_account" />
-          <SidebarLink to="/upload" label="Upload New" icon="upload" />
+          
+          {/* Manager-only navigation */}
+          {isManager && (
+            <>
+              <SidebarLink to="/meetings" label="Meetings" icon="video_call" />
+              <SidebarLink to="/upload" label="Upload Meeting" icon="upload" />
+              <SidebarLink to="/task-manager" label="Task Manager" icon="assignment_turned_in" />
+            </>
+          )}
+          
+          {/* Employee-only navigation */}
+          {isEmployee && (
+            <SidebarLink to="/tasks" label="My Tasks" icon="assignment" />
+          )}
+          
+          {/* Profile link for all */}
+          <SidebarLink to="/profile" label="Profile" icon="person" />
         </nav>
 
         <div className="p-4 border-t border-slate-200">
           <div className="flex items-center space-x-3 px-4 py-3">
             <img
-              src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.displayName || 'User'}`}
+              src={user?.photoURL || `https://ui-avatars.com/api/?name=${displayName}&background=6366f1&color=fff`}
               className="w-10 h-10 rounded-full border border-slate-200"
               alt="Profile"
             />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-slate-900 truncate">{user?.displayName}</p>
+              <p className="text-sm font-semibold text-slate-900 truncate">{displayName}</p>
+              <p className="text-xs text-slate-500">{roleLabel}</p>
               <button
                 onClick={handleLogout}
-                className="text-xs text-slate-500 hover:text-indigo-600 transition-colors"
+                className="text-xs text-slate-500 hover:text-indigo-600 transition-colors mt-1"
               >
                 Sign Out
               </button>
@@ -83,7 +101,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <Link to="/dashboard" className="font-bold text-lg text-indigo-600">MeetTask AI</Link>
           <div className="flex items-center space-x-4">
              <Link to="/profile">
-               <img src={user?.photoURL || ''} className="w-8 h-8 rounded-full" alt="profile" />
+               <img 
+                 src={user?.photoURL || `https://ui-avatars.com/api/?name=${displayName}&background=6366f1&color=fff`} 
+                 className="w-8 h-8 rounded-full" 
+                 alt="profile" 
+               />
              </Link>
           </div>
         </header>

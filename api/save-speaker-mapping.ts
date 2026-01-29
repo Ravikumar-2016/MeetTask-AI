@@ -1,16 +1,14 @@
 /**
- * Save Speaker Mapping & Extract Tasks
+ * Save Speaker Mapping API
  * 
  * POST /api/save-speaker-mapping
  * 
- * ENTERPRISE WORKFLOW:
- * 1. User maps speakers: { A: "MTAI001", B: "MTAI002" }
- * 2. Validates: No duplicates, creator excluded from assignment
+ * SIMPLIFIED WORKFLOW (No AI Task Extraction):
+ * 1. Manager maps speakers to employees: { A: "MTAI001", B: "MTAI002" }
+ * 2. Validates: No duplicates, manager excluded from mapping
  * 3. Saves mapping to transcript
- * 4. Uses GEMINI to extract tasks with correct assignments
- * 5. Saves tasks to dedicated /tasks collection
- * 6. Triggers async email notifications
- * 7. Status → "completed"
+ * 4. Updates meeting status to "completed"
+ * 5. Manager manually creates tasks in Task Manager
  * 
  * Request body:
  * {
@@ -19,18 +17,11 @@
  * }
  */
 
-// CRITICAL: Force Node.js runtime
 export const runtime = "nodejs";
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-
-// ============================================
-// GROQ CONFIG (Free, fast, OpenAI-compatible)
-// ============================================
-const GROQ_MODEL = 'llama-3.1-70b-versatile'; // Best for task extraction
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // ============================================
 // FIREBASE ADMIN SETUP
@@ -53,216 +44,7 @@ function getAdminDb() {
 }
 
 // ============================================
-// TYPES
-// ============================================
-interface SpeakerMapping {
-  [speakerId: string]: string; // "A" => "MTAI001"
-}
-
-interface FirestoreUser {
-  uid: string;
-  mtaiId: string;
-  email: string;
-  displayName: string;
-  photoURL?: string | null;
-  authProviders: string[];
-}
-
-// Enhanced Task type for enterprise workflow
-interface EnhancedTask {
-  id: string;
-  meetingId: string;
-  meetingTitle: string;
-  
-  // Ownership
-  creatorId: string;           // Meeting owner's Firebase UID
-  creatorMtaiId: string;       // Meeting owner's MTAI ID
-  creatorName: string;
-  
-  // Assignment
-  assignedTo: string;          // MTAI ID
-  assignedToName: string;
-  assignedToEmail: string;
-  speakerId: string | null;
-  
-  // Task details
-  title: string;
-  description: string;
-  priority: 'critical' | 'high' | 'medium' | 'low';
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
-  dueDate: string | null;
-  
-  // AI extraction (use null not undefined for Firestore)
-  confidence: number | null;
-  sourceSentence: string | null;
-  
-  // Timestamps
-  createdAt: any;
-  updatedAt: any;
-  
-  // Legacy compatibility
-  userId: string;
-}
-
-// ============================================
-// LOOKUP USERS BY MTAI ID (or temporary ID)
-// ============================================
-async function lookupUsersByMtaiId(
-  db: FirebaseFirestore.Firestore,
-  mtaiIds: string[]
-): Promise<Map<string, FirestoreUser>> {
-  const usersMap = new Map<string, FirestoreUser>();
-  
-  // Query all users
-  const usersSnap = await db.collection('users').get();
-  
-  usersSnap.forEach((docSnap) => {
-    const data = docSnap.data();
-    const email = data.email || docSnap.id;
-    const mtaiId = data.mtaiId || `TEMP-${docSnap.id.substring(0, 6).toUpperCase()}`;
-    
-    if (mtaiIds.includes(mtaiId)) {
-      usersMap.set(mtaiId, {
-        uid: data.uid || docSnap.id,
-        mtaiId: mtaiId,
-        email: email,
-        displayName: data.displayName || email.split('@')[0] || 'User',
-        photoURL: data.photoURL || null,
-        authProviders: data.authProviders || [],
-      });
-    }
-  });
-  
-  return usersMap;
-}
-
-// ============================================
-// TASK EXTRACTION WITH GROQ (Free, Fast)
-// ============================================
-async function extractTasksWithAI(
-  transcriptText: string,
-  speakerMapping: SpeakerMapping,
-  mtaiIdToName: Map<string, string>
-): Promise<any[]> {
-  const apiKey = process.env.GROQ_API_KEY;
-  
-  if (!apiKey) {
-    console.error('❌ GROQ_API_KEY not configured');
-    throw new Error('GROQ_API_KEY not configured');
-  }
-  
-  console.log('🤖 Groq: Extracting tasks with Llama 3.1 70B...');
-  console.log('🗺️ Speaker mapping:', speakerMapping);
-  
-  // Build speaker info for prompt
-  const speakerInfo = Object.entries(speakerMapping)
-    .filter(([_, mtaiId]) => mtaiId)
-    .map(([id, mtaiId]) => {
-      const name = mtaiIdToName.get(mtaiId) || mtaiId;
-      return `Speaker ${id} = ${name} (ID: ${mtaiId})`;
-    })
-    .join('\n');
-
-  console.log('👥 Speaker info:\n', speakerInfo);
-
-  // Truncate transcript to fit context window (Llama has 128k context)
-  const maxTranscriptLength = 30000;
-  const truncatedTranscript = transcriptText.length > maxTranscriptLength 
-    ? transcriptText.substring(0, maxTranscriptLength) + '\n\n[Transcript truncated...]'
-    : transcriptText;
-
-  const systemPrompt = `You are a meeting task extraction assistant. Extract ALL action items from meeting transcripts.
-
-For each task, return a JSON object with:
-- "title": Brief task title
-- "description": What needs to be done
-- "assignedToMtaiId": The MTAI ID from speaker mapping
-- "speakerId": Speaker letter (A, B, C) who owns this task
-- "priority": "high", "medium", or "low"
-- "dueDate": YYYY-MM-DD if mentioned, otherwise null
-- "sourceSentence": Exact quote from transcript
-
-Return ONLY a valid JSON array. No markdown, no explanation.`;
-
-  const userPrompt = `SPEAKER MAPPING:
-${speakerInfo}
-
-TRANSCRIPT:
-${truncatedTranscript}
-
-Extract all tasks as JSON array:`;
-
-  try {
-    console.log('📤 Groq: Sending request...');
-    console.log('📄 Transcript length:', truncatedTranscript.length, 'chars');
-    
-    const response = await fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Groq API error:', response.status, errorText);
-      throw new Error(`Groq API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '[]';
-    
-    console.log('📄 Groq response:', content);
-
-    // Parse JSON from response
-    let tasks: any[] = [];
-    try {
-      // Clean the response - remove markdown code blocks if present
-      let cleanContent = content.trim();
-      if (cleanContent.startsWith('```json')) {
-        cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-      } else if (cleanContent.startsWith('```')) {
-        cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '');
-      }
-      
-      // Try to find JSON array in response
-      const jsonMatch = cleanContent.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        tasks = JSON.parse(jsonMatch[0]);
-        console.log('✅ Groq: Parsed', tasks.length, 'tasks');
-        if (tasks.length > 0) {
-          console.log('📋 First task:', JSON.stringify(tasks[0], null, 2));
-        }
-      } else {
-        tasks = JSON.parse(cleanContent);
-        if (!Array.isArray(tasks)) {
-          tasks = [tasks];
-        }
-      }
-    } catch (parseError: any) {
-      console.error('❌ Failed to parse Groq response:', parseError.message);
-      console.log('📄 Raw response:', content);
-    }
-
-    return Array.isArray(tasks) ? tasks : [];
-  } catch (error: any) {
-    console.error('❌ Groq extraction failed:', error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// VERIFY TOKEN
+// TOKEN VERIFICATION
 // ============================================
 async function verifyFirebaseToken(token: string): Promise<string | null> {
   try {
@@ -288,7 +70,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed' });
 
   console.log('\n========================================');
-  console.log('🗺️ [Speaker Mapping] Save & Extract Tasks');
+  console.log('🗺️ [Speaker Mapping] Save Mapping');
   console.log('========================================\n');
 
   try {
@@ -327,243 +109,81 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const meeting = meetingDoc.data()!;
 
-    // Verify ownership
+    // Verify ownership (only manager who created meeting can save mapping)
     if (meeting.userId !== userId) {
       return response.status(403).json({ error: 'Not authorized' });
     }
 
     // VALIDATION: Check for duplicate assignments
     const assignedMtaiIds = Object.values(speakerMapping) as string[];
-    const uniqueAssignees = new Set(assignedMtaiIds.filter(id => id && id !== ''));
-    if (uniqueAssignees.size !== assignedMtaiIds.filter(id => id && id !== '').length) {
+    const nonEmptyAssignees = assignedMtaiIds.filter(id => id && id !== '');
+    const uniqueAssignees = new Set(nonEmptyAssignees);
+    
+    if (uniqueAssignees.size !== nonEmptyAssignees.length) {
       return response.status(400).json({ 
-        error: 'Duplicate assignment detected. Each user can only be assigned to one speaker.' 
+        error: 'Duplicate assignment detected. Each employee can only be assigned to one speaker.' 
       });
     }
 
-    // Get meeting creator info for notifications
+    // Get creator info
     const creatorDoc = await db.collection('users').where('uid', '==', userId).limit(1).get();
     const creatorData = creatorDoc.empty ? null : creatorDoc.docs[0].data();
     const creatorMtaiId = creatorData?.mtaiId || '';
-    const creatorName = creatorData?.displayName || 'Meeting Organizer';
 
-    // Update status to analyzing
-    await meetingRef.update({
-      status: 'analyzing',
-      speakerMapping,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    // Get transcript
-    const transcriptDoc = await db.collection('transcripts').doc(meetingId).get();
-    if (!transcriptDoc.exists) {
-      await meetingRef.update({
-        status: 'error',
-        errorMessage: 'Transcript not found',
-        updatedAt: FieldValue.serverTimestamp(),
+    // VALIDATION: Manager should not be in the mapping
+    if (nonEmptyAssignees.includes(creatorMtaiId)) {
+      return response.status(400).json({ 
+        error: 'Manager cannot be assigned as a meeting participant.' 
       });
-      return response.status(404).json({ error: 'Transcript not found' });
     }
 
-    const transcript = transcriptDoc.data()!;
-
-    // Get MTAI IDs from mapping (filter empty values - skipped speakers)
-    const mtaiIds = (Object.values(speakerMapping) as string[]).filter(id => id && id !== '');
-    
-    // Look up users by MTAI ID
-    const usersMap = await lookupUsersByMtaiId(db, mtaiIds);
-    
-    // Build MTAI ID to display name mapping
+    // Look up employee names for the mapping
     const mtaiIdToName = new Map<string, string>();
-    const mtaiIdToEmail = new Map<string, string>();
     
-    for (const [mtaiId, user] of usersMap) {
-      mtaiIdToName.set(mtaiId, user.displayName);
-      mtaiIdToEmail.set(mtaiId, user.email);
-    }
-
-    console.log('👥 Users found:', usersMap.size);
-    console.log('📧 MTAI to Name:', Object.fromEntries(mtaiIdToName));
-
-    // Extract tasks using Groq AI
-    console.log('🤖 Extracting tasks with Groq Llama 3.1...');
-    
-    let extractedTasks: any[] = [];
-    
-    // Get transcript text for extraction
-    const transcriptText = transcript.formattedTranscript || transcript.text || '';
-    console.log('📄 Transcript length:', transcriptText.length, 'chars');
-    
-    // Track if AI extraction actually failed (vs just finding no tasks)
-    let aiError: string | null = null;
-    
-    if (transcriptText.length > 50) {
-      if (process.env.GROQ_API_KEY) {
-        try {
-          extractedTasks = await extractTasksWithAI(
-            transcriptText,
-            speakerMapping,
-            mtaiIdToName
-          );
-          console.log('✅ Groq extraction completed, tasks:', extractedTasks.length);
-        } catch (err: any) {
-          aiError = err.message;
-          console.error('❌ Groq extraction FAILED:', aiError);
-          // CRITICAL: Set error status and STOP pipeline
-          await meetingRef.update({
-            status: 'task_extraction_failed',
-            errorMessage: `Groq AI failed: ${aiError}`,
-            speakerMapping,
-            speakerMappingComplete: true,
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-          
-          return response.status(200).json({
-            success: false,
-            error: 'Task extraction failed',
-            errorDetails: aiError,
-            status: 'task_extraction_failed',
-          });
+    if (nonEmptyAssignees.length > 0) {
+      const usersSnapshot = await db.collection('users').get();
+      usersSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (nonEmptyAssignees.includes(data.mtaiId)) {
+          mtaiIdToName.set(data.mtaiId, data.name || data.displayName || data.email?.split('@')[0] || 'User');
         }
-      } else {
-        console.error('❌ GROQ_API_KEY not configured - cannot extract tasks');
-        aiError = 'GROQ_API_KEY not configured';
-      }
-    } else {
-      console.warn('⚠️ Transcript too short for task extraction');
+      });
     }
 
-    console.log('📋 Tasks extracted:', extractedTasks.length);
-
-    // Save tasks to Firestore with enhanced structure
-    const savedTasks: EnhancedTask[] = [];
-    const batch = db.batch();
-
-    for (const task of extractedTasks) {
-      const taskRef = db.collection('tasks').doc();
-      // Use mtaiId from AI response or fall back to first speaker
-      const assignedMtaiId = task.assignedToMtaiId || task.assignedTo || mtaiIds[0] || '';
-      
-      // Normalize priority
-      let priority = (task.priority || 'medium').toLowerCase();
-      if (!['critical', 'high', 'medium', 'low'].includes(priority)) {
-        priority = 'medium';
-      }
-      
-      // Build task data - IMPORTANT: No undefined values allowed in Firestore
-      const taskData: EnhancedTask = {
-        id: taskRef.id,
-        meetingId,
-        meetingTitle: meeting.title || 'Untitled Meeting',
-        
-        // Ownership
-        creatorId: userId,
-        creatorMtaiId: creatorMtaiId || '',
-        creatorName: creatorName || 'Meeting Organizer',
-        
-        // Assignment
-        assignedTo: assignedMtaiId,
-        assignedToName: mtaiIdToName.get(assignedMtaiId) || assignedMtaiId || '',
-        assignedToEmail: mtaiIdToEmail.get(assignedMtaiId) || '',
-        speakerId: task.speakerId || null,
-        
-        // Task details
-        title: task.title || 'Untitled Task',
-        description: task.description || '',
-        priority: priority as 'critical' | 'high' | 'medium' | 'low',
-        status: 'pending',
-        dueDate: task.dueDate || null,
-        
-        // AI extraction metadata - use null instead of undefined
-        confidence: typeof task.confidence === 'number' ? task.confidence : null,
-        sourceSentence: task.sourceSentence || null,
-        
-        // Timestamps
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        
-        // Legacy compatibility
-        userId: userId,
-      };
-
-      batch.set(taskRef, taskData);
-      savedTasks.push(taskData);
-    }
-
-    await batch.commit();
-    console.log('💾 Tasks saved to Firestore');
+    console.log('👥 Mapped employees:', Object.fromEntries(mtaiIdToName));
 
     // Update transcript with mapping
-    await db.collection('transcripts').doc(meetingId).update({
-      speakerMapping,
-      speakerMappingComplete: true,
-      mtaiIdToName: Object.fromEntries(mtaiIdToName),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    // CRITICAL: Determine correct status based on extraction result
-    // Don't mark as completed if AI failed (0 tasks from extraction failure)
-    let finalStatus: string;
-    if (savedTasks.length > 0) {
-      finalStatus = 'completed';
-    } else if (transcriptText.length < 50) {
-      finalStatus = 'no_tasks_found'; // Transcript too short
-    } else {
-      // AI was called but returned 0 tasks - could be failure or genuinely no tasks
-      // Check if GROQ_API_KEY exists to distinguish
-      finalStatus = process.env.GROQ_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
+    const transcriptRef = db.collection('transcripts').doc(meetingId);
+    const transcriptDoc = await transcriptRef.get();
+    
+    if (transcriptDoc.exists) {
+      await transcriptRef.update({
+        speakerMapping,
+        speakerMappingComplete: true,
+        mtaiIdToName: Object.fromEntries(mtaiIdToName),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     }
 
-    // Update meeting with correct status
+    // Update meeting status to completed
     await meetingRef.update({
-      status: finalStatus,
+      status: 'completed',
       speakerMapping,
       speakerMappingComplete: true,
-      taskCount: savedTasks.length,
-      participants: mtaiIds,
+      participants: nonEmptyAssignees,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    console.log('\n✅ Speaker mapping saved!');
-    console.log('   - Tasks:', savedTasks.length);
-    console.log('   - Status:', finalStatus);
-
-    // ============================================
-    // ASYNC EMAIL NOTIFICATIONS
-    // Fire-and-forget - don't block the response
-    // ============================================
-    if (savedTasks.length > 0) {
-      console.log('📧 Triggering async email notifications...');
-      
-      // Get base URL for notification service
-      const baseUrl = process.env.VERCEL_URL 
-        ? `https://${process.env.VERCEL_URL}`
-        : '';
-      
-      // Fire-and-forget - don't await
-      if (baseUrl) {
-        fetch(`${baseUrl}/api/send-task-notifications`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            meetingId,
-            meetingTitle: meeting.title || 'Untitled Meeting',
-            tasks: savedTasks,
-            creatorName: creatorName,
-          }),
-        }).catch(err => {
-          console.error('📧 Email notification failed (non-blocking):', err.message);
-        });
-      } else {
-        console.log('⚠️ VERCEL_URL not set - skipping email notifications');
-      }
-    }
+    console.log('\n✅ Speaker mapping saved successfully!');
+    console.log('   - Participants:', nonEmptyAssignees.length);
+    console.log('   - Status: completed');
+    console.log('   - Ready for manual task creation');
 
     return response.status(200).json({
       success: true,
-      tasks: savedTasks,
-      tasksExtracted: savedTasks.length,
-      status: finalStatus,
+      status: 'completed',
+      participants: nonEmptyAssignees,
+      message: 'Speaker mapping saved. You can now create tasks manually in the Task Manager.',
     });
 
   } catch (error: any) {

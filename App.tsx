@@ -13,7 +13,7 @@ import UploadPage from './pages/UploadPage';
 import MeetingsPage from './pages/MeetingsPage';
 import MeetingDetailsPage from './pages/MeetingDetailsPage';
 import TasksPage from './pages/TasksPage';
-import ManagerDashboard from './pages/ManagerDashboard';
+import TaskManagerPage from './pages/TaskManagerPage';
 import ProfilePage from './pages/ProfilePage';
 
 const App: React.FC = () => {
@@ -28,11 +28,17 @@ const App: React.FC = () => {
           {/* Protected Routes */}
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
+            
+            {/* Manager Routes */}
             <Route path="/upload" element={<Layout><UploadPage /></Layout>} />
             <Route path="/meetings" element={<Layout><MeetingsPage /></Layout>} />
             <Route path="/meetings/:id" element={<Layout><MeetingDetailsPage /></Layout>} />
+            <Route path="/task-manager" element={<Layout><TaskManagerPage /></Layout>} />
+            
+            {/* Employee Routes */}
             <Route path="/tasks" element={<Layout><TasksPage /></Layout>} />
-            <Route path="/manager" element={<Layout><ManagerDashboard /></Layout>} />
+            
+            {/* Common Routes */}
             <Route path="/profile" element={<Layout><ProfilePage /></Layout>} />
           </Route>
 

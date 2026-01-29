@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { UserRole } from '../types';
 
 // Auth screen modes
 type AuthMode = 'login' | 'signup' | 'forgot-password' | 'verify-email' | 'reset-sent';
@@ -52,10 +53,15 @@ const LoginPage: React.FC = () => {
   // Form state
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<UserRole>('employee');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  
+  // Google signup flow - needs role selection after OAuth
+  const [pendingGoogleUser, setPendingGoogleUser] = useState<boolean>(false);
   
   // UI state
   const [error, setError] = useState('');
@@ -125,12 +131,15 @@ const LoginPage: React.FC = () => {
    */
   const resetForm = useCallback(() => {
     setEmail('');
+    setName('');
+    setRole('employee');
     setPassword('');
     setConfirmPassword('');
     setShowPassword(false);
     setShowConfirmPassword(false);
     setError('');
     setSuccess('');
+    setPendingGoogleUser(false);
   }, []);
 
   /**
@@ -160,6 +169,12 @@ const LoginPage: React.FC = () => {
     setError('');
     setSuccess('');
 
+    // Validate name
+    if (!name.trim()) {
+      setError('Please enter your full name.');
+      return;
+    }
+
     // Validate password match
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
@@ -175,7 +190,7 @@ const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await signup(email, password);
+      await signup(email, password, name.trim(), role);
       setSuccess('Account created! Please check your email to verify your account.');
       setResendTimer(60);
     } catch (err: any) {
@@ -205,7 +220,7 @@ const LoginPage: React.FC = () => {
   };
 
   /**
-   * Handle Google sign in
+   * Handle Google sign in (for login - existing users)
    */
   const handleGoogleSignIn = async () => {
     setError('');
@@ -213,8 +228,33 @@ const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await googleLogin();
+      // Try to sign in - googleLogin handles existing vs new users
+      await googleLogin(name.trim() || '', role);
       setSuccess('Google sign-in successful! Redirecting...');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Handle Google signup (new users - needs name and role)
+   */
+  const handleGoogleSignup = async () => {
+    setError('');
+    setSuccess('');
+
+    if (!name.trim()) {
+      setError('Please enter your full name before continuing with Google.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await googleLogin(name.trim(), role);
+      setSuccess('Account created with Google! Redirecting...');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -455,16 +495,31 @@ const LoginPage: React.FC = () => {
           {mode === 'signup' && (
             <>
               <h2 className="text-2xl font-bold text-slate-900 text-center mb-2">Create account</h2>
-              <p className="text-slate-500 text-center mb-8">Start your free trial today</p>
+              <p className="text-slate-500 text-center mb-8">Join MeetTask AI today</p>
 
               <div className="space-y-4">
                 {renderError()}
                 {renderSuccess()}
 
-                {renderGoogleButton()}
-                {renderDivider()}
-
                 <form onSubmit={handleSignup} className="space-y-4">
+                  {/* Full Name */}
+                  <div>
+                    <label htmlFor="signup-name" className="block text-sm font-medium text-slate-700 mb-1">
+                      Full Name
+                    </label>
+                    <input
+                      id="signup-name"
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                      placeholder="John Smith"
+                      required
+                      autoComplete="name"
+                    />
+                  </div>
+
+                  {/* Email */}
                   <div>
                     <label htmlFor="signup-email" className="block text-sm font-medium text-slate-700 mb-1">
                       Email address
@@ -479,6 +534,45 @@ const LoginPage: React.FC = () => {
                       required
                       autoComplete="email"
                     />
+                  </div>
+
+                  {/* Role Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      I am a...
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setRole('manager')}
+                        className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all ${
+                          role === 'manager'
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                        }`}
+                      >
+                        <svg className="w-6 h-6 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        <span className="font-medium">Manager</span>
+                        <span className="text-xs text-slate-500 mt-1">Create & assign tasks</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRole('employee')}
+                        className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all ${
+                          role === 'employee'
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                        }`}
+                      >
+                        <svg className="w-6 h-6 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <span className="font-medium">Employee</span>
+                        <span className="text-xs text-slate-500 mt-1">View & complete tasks</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -504,6 +598,24 @@ const LoginPage: React.FC = () => {
                     {loading ? <Spinner /> : 'Create account'}
                   </button>
                 </form>
+
+                {renderDivider()}
+
+                {/* Google signup - only if name is provided */}
+                <button
+                  type="button"
+                  onClick={handleGoogleSignup}
+                  disabled={loading || !name.trim()}
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <GoogleIcon />
+                  <span>Sign up with Google</span>
+                </button>
+                {!name.trim() && (
+                  <p className="text-xs text-center text-slate-500">
+                    Enter your name above to enable Google signup
+                  </p>
+                )}
 
                 <p className="text-center text-sm text-slate-600 mt-6">
                   Already have an account?{' '}

@@ -294,7 +294,7 @@ const MeetingDetailsPage: React.FC = () => {
           }
         }
 
-        // Load all users for dropdown
+        // Load all EMPLOYEE users for dropdown (exclude managers)
         const usersSnap = await getDocs(collection(db, 'users'));
         const users: FirestoreUser[] = [];
         let needsMigration = false;
@@ -303,43 +303,47 @@ const MeetingDetailsPage: React.FC = () => {
           const data = docSnap.data();
           const email = data.email || docSnap.id;
           
-          // Include all users, generate temporary MTAI ID if missing
+          // IMPORTANT: Only include employees in the dropdown
+          // Managers should not appear in speaker mapping
+          if (data.role !== 'employee') {
+            console.log('[MeetingDetails] Skipping non-employee:', email, 'role:', data.role);
+            return;
+          }
+          
+          // Include only employees, generate temporary MTAI ID if missing
           const mtaiId = data.mtaiId || `TEMP-${docSnap.id.substring(0, 6).toUpperCase()}`;
           
           if (!data.mtaiId) {
             needsMigration = true;
-            console.log('[MeetingDetails] User without MTAI ID:', email);
+            console.log('[MeetingDetails] Employee without MTAI ID:', email);
           }
           
           users.push({
             uid: data.uid || docSnap.id,
             mtaiId: mtaiId,
             email: email,
-            displayName: data.displayName || email.split('@')[0] || 'User',
+            name: data.name || data.displayName || email.split('@')[0] || 'User',
+            displayName: data.displayName || data.name || email.split('@')[0] || 'User',
             photoURL: data.photoURL || null,
             authProviders: data.authProviders || [],
+            role: 'employee',
           });
         });
         
-        // Also add current user if not in list
-        if (user?.email && !users.find(u => u.email === user.email)) {
-          users.push({
-            uid: user.uid,
-            mtaiId: (user as any).mtaiId || `TEMP-${user.uid.substring(0, 6).toUpperCase()}`,
-            email: user.email,
-            displayName: user.displayName || user.email.split('@')[0] || 'User',
-            photoURL: user.photoURL || null,
-            authProviders: [],
-          });
-        }
+        // NOTE: Do NOT add current user (manager) to the list
+        // Only employees should appear in the speaker mapping dropdown
         
-        // Sort by MTAI ID for consistency
-        users.sort((a, b) => a.mtaiId.localeCompare(b.mtaiId));
+        // Sort by name for better UX
+        users.sort((a, b) => (a.name || a.displayName || '').localeCompare(b.name || b.displayName || ''));
         setUsersList(users);
-        console.log('[MeetingDetails] Users loaded for mapping:', users.length);
+        console.log('[MeetingDetails] Employees loaded for mapping:', users.length);
         
         if (needsMigration) {
-          console.log('[MeetingDetails] Some users need MTAI ID migration - they will get IDs on next login');
+          console.log('[MeetingDetails] Some employees need MTAI ID migration - they will get IDs on next login');
+        }
+        
+        if (users.length === 0) {
+          console.warn('[MeetingDetails] No employees found! Managers cannot map speakers without employees.');
         }
       } catch (err) {
         console.error('[MeetingDetails] Error loading speakers/users:', err);
@@ -354,14 +358,14 @@ const MeetingDetailsPage: React.FC = () => {
     setPendingMapping(prev => ({ ...prev, [speakerId]: mtaiId }));
   };
 
-  // Save speaker mapping and trigger task extraction
+  // Save speaker mapping (no AI task extraction - manual task creation later)
   const saveSpeakerMapping = async () => {
     // Get mappings that have values (non-skipped speakers)
     const activeMappings = Object.entries(pendingMapping).filter(([_, value]) => value);
     
     // At least one speaker must be mapped
     if (activeMappings.length === 0) {
-      setMappingError('Please map at least one speaker to extract tasks');
+      setMappingError('Please map at least one speaker (employee) to continue');
       return;
     }
     
@@ -369,7 +373,7 @@ const MeetingDetailsPage: React.FC = () => {
     const assignedMtaiIds = activeMappings.map(([_, mtaiId]) => mtaiId);
     const uniqueMtaiIds = new Set(assignedMtaiIds);
     if (uniqueMtaiIds.size !== assignedMtaiIds.length) {
-      setMappingError('Each participant can only be assigned to one speaker');
+      setMappingError('Each employee can only be assigned to one speaker');
       return;
     }
 
@@ -401,7 +405,8 @@ const MeetingDetailsPage: React.FC = () => {
       }
 
       const result = await res.json();
-      console.log('[MeetingDetails] Mapping saved, tasks:', result.tasksExtracted);
+      console.log('[MeetingDetails] Mapping saved successfully');
+      console.log('[MeetingDetails] Ready for manual task creation');
       
       // Update local state
       setSpeakerMapping(filteredMapping);
@@ -698,19 +703,27 @@ const MeetingDetailsPage: React.FC = () => {
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-2xl border border-amber-200 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <span className="material-icons text-amber-600">people_alt</span>
-                <h3 className="font-bold text-lg text-amber-900">Map Speakers to Participants</h3>
+                <h3 className="font-bold text-lg text-amber-900">Map Speakers to Employees</h3>
               </div>
               <p className="text-sm text-amber-800 mb-4">
                 We detected {speakers.length} speaker{speakers.length !== 1 ? 's' : ''} in this meeting. 
-                Please identify who each speaker is to assign tasks correctly.
+                Map each speaker to the employee who was speaking. After mapping, you can create tasks manually.
               </p>
               
               {/* Enterprise Rules Notice */}
               <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                 <p className="text-xs text-blue-700">
-                  <span className="font-semibold">Rules:</span> You (meeting creator) cannot be assigned. Each participant can only be assigned to one speaker.
+                  <span className="font-semibold">Rules:</span> Only employees are shown. You (manager) cannot be assigned. Each employee can only be assigned to one speaker.
                 </p>
               </div>
+              
+              {usersList.length === 0 && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg">
+                  <p className="text-sm text-red-700">
+                    <span className="font-semibold">No employees found!</span> Please make sure employees have signed up before mapping speakers.
+                  </p>
+                </div>
+              )}
               
               <div className="space-y-3">
                 {speakers.map((speakerId) => {
@@ -755,11 +768,11 @@ const MeetingDetailsPage: React.FC = () => {
                         onChange={(e) => handleMappingChange(speakerId, e.target.value)}
                         className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 font-medium"
                       >
-                        <option value="">Select participant...</option>
+                        <option value="">Select employee...</option>
                         <option value="" disabled className="text-slate-400">── Skip this speaker ──</option>
                         {availableUsers.map((u) => (
                           <option key={u.mtaiId} value={u.mtaiId}>
-                            [{u.mtaiId}] {u.displayName} ({u.email})
+                            [{u.mtaiId}] {u.name || u.displayName} ({u.email})
                           </option>
                         ))}
                       </select>
@@ -804,20 +817,20 @@ const MeetingDetailsPage: React.FC = () => {
                 {savingMapping ? (
                   <>
                     <span className="animate-spin">⏳</span>
-                    Extracting Tasks...
+                    Saving Mapping...
                   </>
                 ) : (
                   <>
                     <span className="material-icons text-sm">check</span>
-                    Confirm & Extract Tasks
+                    Confirm Speaker Mapping
                   </>
                 )}
               </button>
               
               <p className="mt-2 text-xs text-amber-700 text-center">
-                After confirming, we'll extract action items and assign them to mapped participants.
+                After confirming, you'll be able to manually create tasks for the mapped employees.
                 <br />
-                <span className="text-amber-600">Skipped speakers will not receive task assignments.</span>
+                <span className="text-amber-600">Skipped speakers will not appear in the transcript view.</span>
               </p>
             </div>
           )}
