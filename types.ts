@@ -195,6 +195,7 @@ export interface Task {
   // Task details
   title: string;
   description?: string;
+  taskType: 'text' | 'file';       // Expected response type
   priority: TaskPriority;
   status: TaskStatus;
   dueDate?: string | null;         // YYYY-MM-DD format

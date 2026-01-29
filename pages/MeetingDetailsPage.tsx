@@ -1,6 +1,15 @@
+/**
+ * MeetingDetailsPage.tsx - Meeting Details with Task Assignment
+ * 
+ * MANAGER WORKFLOW:
+ * 1. View meeting transcript (read-only after mapping)
+ * 2. See mapped participants
+ * 3. Assign tasks directly from this page
+ * 4. View all tasks for this meeting
+ */
 
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { 
   doc, 
   getDoc, 
@@ -13,8 +22,31 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Meeting, Task, MeetingStatus, TaskPriorityExtended, TaskStatus, TaskStatusExtended, SpeakerUtterance, SpeakerMapping, FirestoreUser } from '../types';
+import { Meeting, Task, SpeakerUtterance, SpeakerMapping, FirestoreUser, TaskPriority } from '../types';
 import { getStatusBadgeClass, getStatusLabel } from '../hooks/useMeetings';
+
+// Priority colors
+const priorityColors: Record<string, string> = {
+  critical: 'bg-red-100 text-red-700 border-red-200',
+  high: 'bg-orange-100 text-orange-700 border-orange-200',
+  medium: 'bg-blue-100 text-blue-700 border-blue-200',
+  low: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+// Status colors
+const statusColors: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-700',
+  in_progress: 'bg-blue-100 text-blue-700',
+  completed: 'bg-green-100 text-green-700',
+  blocked: 'bg-red-100 text-red-700',
+};
+
+const statusLabels: Record<string, string> = {
+  pending: 'Pending',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  blocked: 'Blocked',
+};
 
 /**
  * Format Firestore timestamp to readable date string
@@ -37,14 +69,12 @@ const formatDate = (timestamp: Timestamp | string | undefined): string => {
 
 const MeetingDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  const { user, isManager, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'tasks' | 'transcript'>('tasks');
   
   // State for meeting data
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [transcript, setTranscript] = useState<string>('');
-  const [formattedTranscript, setFormattedTranscript] = useState<string>('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +83,6 @@ const MeetingDetailsPage: React.FC = () => {
   const [utterances, setUtterances] = useState<SpeakerUtterance[]>([]);
   const [speakerMapping, setSpeakerMapping] = useState<SpeakerMapping>({});
   const [showSpeakerView, setShowSpeakerView] = useState(true);
-  const [videoOcrUsed, setVideoOcrUsed] = useState(false);
   
   // Speaker mapping UI state (for needs_mapping status)
   const [speakers, setSpeakers] = useState<string[]>([]);
@@ -61,322 +90,186 @@ const MeetingDetailsPage: React.FC = () => {
   const [pendingMapping, setPendingMapping] = useState<SpeakerMapping>({});
   const [savingMapping, setSavingMapping] = useState(false);
   const [mappingError, setMappingError] = useState<string | null>(null);
-  const [resetting, setResetting] = useState(false);
 
-  // Reset meeting to re-extract tasks
-  const resetToMapping = async () => {
-    if (!id) return;
-    setResetting(true);
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Not authenticated');
-      
-      const res = await fetch('/api/reset-meeting', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          meetingId: id,
-          targetStatus: 'needs_mapping',
-        }),
-      });
-      
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Failed to reset meeting');
-      }
-      
-      // Reload the page to show mapping UI
-      window.location.reload();
-    } catch (err: any) {
-      console.error('Reset error:', err);
-      setMappingError(err.message);
-    } finally {
-      setResetting(false);
-    }
-  };
+  // Task creation state
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [taskType, setTaskType] = useState<'text' | 'file'>('text');
+  const [assignedEmployee, setAssignedEmployee] = useState('');
+  const [priority, setPriority] = useState<TaskPriority>('medium');
+  const [dueDate, setDueDate] = useState('');
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [taskError, setTaskError] = useState('');
 
-  // Fetch meeting details
+  // Get list of mapped employees (participants)
+  const mappedEmployees = usersList.filter(u => 
+    Object.values(speakerMapping).includes(u.mtaiId)
+  );
+
+  // Load meeting data
   useEffect(() => {
-    // ============================================
-    // CRITICAL: Wait for auth to finish loading
-    // On page reload, Firebase restores auth session asynchronously.
-    // We MUST wait for this to complete before querying Firestore.
-    // ============================================
-    if (authLoading) {
-      console.log('[MeetingDetails] Auth loading, waiting...');
-      setLoading(true);
-      return;
-    }
+    if (authLoading || !id) return;
 
-    if (!id || !user?.uid) {
-      console.log('[MeetingDetails] No id or user, showing error');
-      setLoading(false);
-      if (!user?.uid) {
-        setError('Please sign in to view this meeting');
-      }
-      return;
-    }
-
-    const fetchMeeting = async () => {
+    const loadMeeting = async () => {
       try {
-        console.log('[MeetingDetails] Auth ready, fetching meeting:', id);
+        // Load meeting document
+        const meetingDoc = await getDoc(doc(db, 'meetings', id));
         
-        // Get meeting document
-        const meetingRef = doc(db, 'meetings', id);
-        const meetingSnap = await getDoc(meetingRef);
-
-        if (!meetingSnap.exists()) {
-          console.log('[MeetingDetails] Meeting not found');
+        if (!meetingDoc.exists()) {
           setError('Meeting not found');
           setLoading(false);
           return;
         }
 
-        const data = meetingSnap.data();
+        const data = meetingDoc.data();
         
-        // Verify ownership - CRITICAL for security
-        if (data.userId !== user.uid) {
-          console.log('[MeetingDetails] Access denied - not owner');
-          setError('You do not have permission to view this meeting');
-          setLoading(false);
-          return;
-        }
-
-        const meetingData: Meeting = {
-          id: meetingSnap.id,
+        setMeeting({
+          id: meetingDoc.id,
           title: data.title || 'Untitled Meeting',
           date: formatDate(data.createdAt),
-          status: (data.status as MeetingStatus) || 'uploaded',
-          fileType: data.fileType || 'audio', // Default to audio for backward compatibility
-          audioUrl: data.audioUrl,
+          status: data.status,
+          fileType: data.fileType,
+          fileUrl: data.fileUrl,
           userId: data.userId,
+          creatorMtaiId: data.creatorMtaiId,
+          creatorName: data.creatorName,
+          speakerCount: data.speakerCount,
+          speakers: data.speakers || [],
+          speakerMapping: data.speakerMapping || {},
           taskCount: data.taskCount || 0,
           errorMessage: data.errorMessage,
-          createdAt: data.createdAt?.toDate?.()?.toISOString() || data.createdAt,
-        };
+          duration: data.duration,
+        } as Meeting);
 
-        console.log('[MeetingDetails] Meeting loaded:', meetingData.title);
-        setMeeting(meetingData);
-        setLoading(false);
-      } catch (err) {
-        console.error('[MeetingDetails] Error fetching meeting:', err);
-        setError('Failed to load meeting details');
-        setLoading(false);
-      }
-    };
-
-    fetchMeeting();
-  }, [id, user?.uid, authLoading]);
-
-  // Fetch transcript - only after auth is ready
-  useEffect(() => {
-    if (authLoading || !id || !user?.uid) return;
-
-    const fetchTranscript = async () => {
-      try {
-        const transcriptRef = doc(db, 'transcripts', id);
-        const transcriptSnap = await getDoc(transcriptRef);
-
-        if (transcriptSnap.exists()) {
-          const data = transcriptSnap.data();
-          setTranscript(data.text || '');
-          
-          // Load formatted transcript (with real names)
-          if (data.formattedTranscript) {
-            setFormattedTranscript(data.formattedTranscript);
-          }
-          
-          // Load speaker diarization data
-          if (data.utterances) {
-            setUtterances(data.utterances);
-          }
-          if (data.speakerMapping) {
-            setSpeakerMapping(data.speakerMapping);
-          }
-          
-          // Check if video OCR was used
-          if (data.videoAnalysisUsed) {
-            setVideoOcrUsed(true);
-          }
-          
-          console.log('[MeetingDetails] Transcript loaded with', data.utterances?.length || 0, 'utterances');
-          console.log('[MeetingDetails] Video OCR used:', data.videoAnalysisUsed || false);
+        // Set speakers for mapping UI
+        if (data.speakers?.length > 0) {
+          setSpeakers(data.speakers);
         }
-      } catch (err) {
-        console.error('[MeetingDetails] Error fetching transcript:', err);
-        // Transcript is optional, don't set error
+        
+        // Set speaker mapping
+        if (data.speakerMapping) {
+          setSpeakerMapping(data.speakerMapping);
+        }
+
+        // Load transcript
+        const transcriptDoc = await getDoc(doc(db, 'transcripts', id));
+        if (transcriptDoc.exists()) {
+          const transcriptData = transcriptDoc.data();
+          setTranscript(transcriptData.text || '');
+          
+          if (transcriptData.utterances) {
+            setUtterances(transcriptData.utterances);
+          }
+          
+          if (transcriptData.speakerMapping) {
+            setSpeakerMapping(transcriptData.speakerMapping);
+          }
+        }
+
+        setLoading(false);
+      } catch (err: any) {
+        console.error('[MeetingDetails] Error loading meeting:', err);
+        setError(err.message || 'Failed to load meeting');
+        setLoading(false);
       }
     };
 
-    fetchTranscript();
-  }, [id, user?.uid, authLoading]);
+    loadMeeting();
+  }, [id, authLoading]);
 
-  // Real-time listener for tasks - only after auth is ready
+  // Listen for task updates for this meeting
   useEffect(() => {
-    if (authLoading || !id || !user?.uid) return;
+    if (!id) return;
 
-    console.log('[MeetingDetails] Setting up tasks listener for meeting:', id, 'user:', user.uid);
-
-    // Query tasks for this meeting AND this user (required by Firestore rules)
     const tasksQuery = query(
       collection(db, 'tasks'),
-      where('meetingId', '==', id),
-      where('userId', '==', user.uid)
+      where('meetingId', '==', id)
     );
 
-    const unsubscribe = onSnapshot(
-      tasksQuery,
-      (snapshot) => {
-        const tasksData: Task[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          tasksData.push({
-            id: doc.id,
-            meetingId: data.meetingId,
-            meetingTitle: data.meetingTitle,
-            title: data.title || 'Untitled Task',
-            description: data.description || '',
-            priority: (data.priority as TaskPriorityExtended) || 'medium',
-            status: (data.status as TaskStatusExtended) || 'pending',
-            // Assignee fields
-            assignedTo: data.assignedTo || '',
-            assignedToName: data.assignedToName || '',
-            assignedToEmail: data.assignedToEmail || '',
-            // Creator fields
-            creatorId: data.creatorId || '',
-            creatorMtaiId: data.creatorMtaiId,
-            creatorName: data.creatorName,
-            dueDate: data.dueDate,
-            // Submission fields
-            submissionText: data.submissionText,
-            submissionFileUrl: data.submissionFileUrl,
-            submissionFileName: data.submissionFileName,
-            submittedAt: data.submittedAt?.toDate?.()?.toISOString(),
-            createdAt: data.createdAt?.toDate?.()?.toISOString(),
-            updatedAt: data.updatedAt?.toDate?.()?.toISOString(),
-            completedAt: data.completedAt?.toDate?.()?.toISOString(),
-          });
-        });
-
-        console.log('[MeetingDetails] Tasks updated:', tasksData.length);
-        setTasks(tasksData);
-      },
-      (err) => {
-        console.error('[MeetingDetails] Error fetching tasks:', err);
-      }
-    );
+    const unsubscribe = onSnapshot(tasksQuery, (snapshot) => {
+      const tasksData: Task[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        tasksData.push({
+          id: doc.id,
+          meetingId: data.meetingId,
+          meetingTitle: data.meetingTitle,
+          title: data.title,
+          description: data.description,
+          taskType: data.taskType || 'text',
+          assignedTo: data.assignedTo,
+          assignedToName: data.assignedToName,
+          assignedToEmail: data.assignedToEmail,
+          priority: data.priority,
+          status: data.status,
+          dueDate: data.dueDate,
+          submissionText: data.submissionText,
+          submissionFileUrl: data.submissionFileUrl,
+          submissionFileName: data.submissionFileName,
+          submittedAt: data.submittedAt,
+          createdAt: data.createdAt,
+          creatorId: data.creatorId,
+          creatorName: data.creatorName,
+        } as Task);
+      });
+      
+      // Sort by creation date
+      tasksData.sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.()?.getTime() || 0;
+        const bTime = b.createdAt?.toDate?.()?.getTime() || 0;
+        return bTime - aTime;
+      });
+      
+      setTasks(tasksData);
+    });
 
     return () => unsubscribe();
-  }, [id, user?.uid, authLoading]);
+  }, [id]);
 
-  // Load users list and speakers when meeting needs mapping
+  // Load employees for mapping/assignment
   useEffect(() => {
-    if (authLoading || !meeting || meeting.status !== 'needs_mapping') return;
+    if (authLoading) return;
 
-    // Load speakers from meeting or transcript
-    const loadSpeakers = async () => {
+    const loadEmployees = async () => {
       try {
-        // Get speakers from transcript
-        const transcriptRef = doc(db, 'transcripts', id!);
-        const transcriptSnap = await getDoc(transcriptRef);
+        const snapshot = await getDocs(collection(db, 'users'));
+        const employeesList: FirestoreUser[] = [];
         
-        if (transcriptSnap.exists()) {
-          const data = transcriptSnap.data();
-          if (data.speakers) {
-            setSpeakers(data.speakers);
-            // Initialize pending mapping with empty values
-            const initial: SpeakerMapping = {};
-            data.speakers.forEach((s: string) => { initial[s] = ''; });
-            setPendingMapping(initial);
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.role === 'employee') {
+            employeesList.push({
+              uid: data.uid || doc.id,
+              mtaiId: data.mtaiId,
+              email: data.email,
+              name: data.name || data.displayName,
+              displayName: data.displayName || data.name,
+              role: 'employee',
+            } as FirestoreUser);
           }
-        }
-
-        // Load all EMPLOYEE users for dropdown (exclude managers)
-        const usersSnap = await getDocs(collection(db, 'users'));
-        const users: FirestoreUser[] = [];
-        let needsMigration = false;
-        
-        usersSnap.forEach((docSnap) => {
-          const data = docSnap.data();
-          const email = data.email || docSnap.id;
-          
-          // IMPORTANT: Only include employees in the dropdown
-          // Managers should not appear in speaker mapping
-          if (data.role !== 'employee') {
-            console.log('[MeetingDetails] Skipping non-employee:', email, 'role:', data.role);
-            return;
-          }
-          
-          // Include only employees, generate temporary MTAI ID if missing
-          const mtaiId = data.mtaiId || `TEMP-${docSnap.id.substring(0, 6).toUpperCase()}`;
-          
-          if (!data.mtaiId) {
-            needsMigration = true;
-            console.log('[MeetingDetails] Employee without MTAI ID:', email);
-          }
-          
-          users.push({
-            uid: data.uid || docSnap.id,
-            mtaiId: mtaiId,
-            email: email,
-            name: data.name || data.displayName || email.split('@')[0] || 'User',
-            displayName: data.displayName || data.name || email.split('@')[0] || 'User',
-            photoURL: data.photoURL || null,
-            authProviders: data.authProviders || [],
-            role: 'employee',
-          });
         });
         
-        // NOTE: Do NOT add current user (manager) to the list
-        // Only employees should appear in the speaker mapping dropdown
-        
-        // Sort by name for better UX
-        users.sort((a, b) => (a.name || a.displayName || '').localeCompare(b.name || b.displayName || ''));
-        setUsersList(users);
-        console.log('[MeetingDetails] Employees loaded for mapping:', users.length);
-        
-        if (needsMigration) {
-          console.log('[MeetingDetails] Some employees need MTAI ID migration - they will get IDs on next login');
-        }
-        
-        if (users.length === 0) {
-          console.warn('[MeetingDetails] No employees found! Managers cannot map speakers without employees.');
-        }
+        setUsersList(employeesList);
       } catch (err) {
-        console.error('[MeetingDetails] Error loading speakers/users:', err);
+        console.error('[MeetingDetails] Error loading employees:', err);
       }
     };
 
-    loadSpeakers();
-  }, [id, meeting?.status, authLoading, user]);
+    loadEmployees();
+  }, [authLoading]);
 
   // Handle speaker mapping change
   const handleMappingChange = (speakerId: string, mtaiId: string) => {
-    setPendingMapping(prev => ({ ...prev, [speakerId]: mtaiId }));
+    setPendingMapping(prev => ({
+      ...prev,
+      [speakerId]: mtaiId
+    }));
   };
 
-  // Save speaker mapping (no AI task extraction - manual task creation later)
+  // Save speaker mapping
   const saveSpeakerMapping = async () => {
-    // Get mappings that have values (non-skipped speakers)
-    const activeMappings = Object.entries(pendingMapping).filter(([_, value]) => value);
-    
-    // At least one speaker must be mapped
-    if (activeMappings.length === 0) {
-      setMappingError('Please map at least one speaker (employee) to continue');
-      return;
-    }
-    
-    // Check for duplicate assignments (same user mapped to multiple speakers)
-    const assignedMtaiIds = activeMappings.map(([_, mtaiId]) => mtaiId);
-    const uniqueMtaiIds = new Set(assignedMtaiIds);
-    if (uniqueMtaiIds.size !== assignedMtaiIds.length) {
-      setMappingError('Each employee can only be assigned to one speaker');
-      return;
-    }
-
+    if (!id) return;
     setSavingMapping(true);
     setMappingError(null);
 
@@ -384,8 +277,15 @@ const MeetingDetailsPage: React.FC = () => {
       const token = await auth.currentUser?.getIdToken();
       if (!token) throw new Error('Not authenticated');
 
-      // Only send non-empty mappings
-      const filteredMapping = Object.fromEntries(activeMappings);
+      // Filter out empty mappings
+      const filteredMapping: SpeakerMapping = {};
+      Object.entries(pendingMapping).forEach(([speakerId, mtaiId]: [string, string]) => {
+        if (mtaiId) filteredMapping[speakerId] = mtaiId;
+      });
+
+      if (Object.keys(filteredMapping).length === 0) {
+        throw new Error('Please map at least one speaker');
+      }
 
       const res = await fetch('/api/save-speaker-mapping', {
         method: 'POST',
@@ -404,14 +304,10 @@ const MeetingDetailsPage: React.FC = () => {
         throw new Error(error.error || 'Failed to save mapping');
       }
 
-      const result = await res.json();
-      console.log('[MeetingDetails] Mapping saved successfully');
-      console.log('[MeetingDetails] Ready for manual task creation');
-      
       // Update local state
       setSpeakerMapping(filteredMapping);
       
-      // Reload meeting to get updated status
+      // Reload page to get updated status
       window.location.reload();
     } catch (err: any) {
       console.error('[MeetingDetails] Error saving mapping:', err);
@@ -421,20 +317,69 @@ const MeetingDetailsPage: React.FC = () => {
     }
   };
 
+  // Create task handler
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTaskError('');
+
+    if (!taskTitle.trim()) {
+      setTaskError('Please enter a task title');
+      return;
+    }
+    if (!assignedEmployee) {
+      setTaskError('Please select an employee');
+      return;
+    }
+
+    setCreatingTask(true);
+
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch('/api/create-task', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          meetingId: id,
+          title: taskTitle.trim(),
+          description: taskDescription.trim(),
+          taskType,
+          assignedToMtaiId: assignedEmployee,
+          priority,
+          dueDate: dueDate || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to create task');
+      }
+
+      // Reset form and close modal
+      setTaskTitle('');
+      setTaskDescription('');
+      setTaskType('text');
+      setAssignedEmployee('');
+      setPriority('medium');
+      setDueDate('');
+      setShowTaskModal(false);
+    } catch (err: any) {
+      console.error('[MeetingDetails] Error creating task:', err);
+      setTaskError(err.message);
+    } finally {
+      setCreatingTask(false);
+    }
+  };
+
   // Loading state
   if (loading) {
     return (
-      <div className="space-y-8">
-        <div className="flex items-center space-x-4">
-          <div className="w-10 h-10 bg-slate-100 rounded-xl animate-pulse"></div>
-          <div className="space-y-2">
-            <div className="h-6 bg-slate-100 rounded w-64 animate-pulse"></div>
-            <div className="h-4 bg-slate-100 rounded w-32 animate-pulse"></div>
-          </div>
-        </div>
-        <div className="bg-white p-8 rounded-2xl border border-slate-200 animate-pulse">
-          <div className="h-32 bg-slate-100 rounded"></div>
-        </div>
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
       </div>
     );
   }
@@ -461,9 +406,13 @@ const MeetingDetailsPage: React.FC = () => {
 
   return (
     <div className="space-y-8">
+      {/* Header - Clean, no Share/Export */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Link to="/meetings" className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-600 hover:bg-slate-50 transition">
+          <Link 
+            to="/meetings" 
+            className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-600 hover:bg-slate-50 transition"
+          >
             <span className="material-icons">arrow_back</span>
           </Link>
           <div>
@@ -471,14 +420,17 @@ const MeetingDetailsPage: React.FC = () => {
             <p className="text-slate-500">{meeting.date}</p>
           </div>
         </div>
-        <div className="flex space-x-2">
-          <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-50 transition flex items-center">
-            <span className="material-icons text-sm mr-2">download</span> Export
+        
+        {/* Only show Assign Task button for completed meetings and managers */}
+        {meeting.status === 'completed' && isManager && (
+          <button
+            onClick={() => setShowTaskModal(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md shadow-indigo-200 transition"
+          >
+            <span className="material-icons text-sm">add_task</span>
+            Assign New Task
           </button>
-          <button className="px-4 py-2 bg-indigo-600 rounded-lg text-sm font-bold text-white hover:bg-indigo-700 transition flex items-center">
-             <span className="material-icons text-sm mr-2">share</span> Share
-          </button>
-        </div>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-3 gap-8">
@@ -491,7 +443,7 @@ const MeetingDetailsPage: React.FC = () => {
                 activeTab === 'tasks' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              Tasks
+              Tasks ({tasks.length})
             </button>
             <button
               onClick={() => setActiveTab('transcript')}
@@ -511,30 +463,16 @@ const MeetingDetailsPage: React.FC = () => {
                   <h3 className="font-bold text-slate-900 mb-2">No tasks yet</h3>
                   <p className="text-slate-500 mb-4">
                     {meeting.status === 'completed' 
-                      ? 'No tasks have been created for this meeting yet'
-                      : 'Tasks will appear here after processing completes'}
+                      ? 'Create tasks for the participants of this meeting'
+                      : 'Tasks can be assigned after speaker mapping is complete'}
                   </p>
-                  {meeting.status === 'completed' && (
+                  {meeting.status === 'completed' && isManager && (
                     <button
-                      onClick={resetToMapping}
-                      disabled={resetting}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-medium rounded-lg transition flex items-center gap-2 mx-auto"
+                      onClick={() => setShowTaskModal(true)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition"
                     >
-                      {resetting ? (
-                        <>
-                          <span className="animate-spin">⏳</span>
-                          Resetting...
-                        </>
-                      ) : (
-                        <>
-                          <span className="material-icons text-sm">refresh</span>
-                          Re-map Speakers
-                        </>
-                      )}
+                      Assign First Task
                     </button>
-                  )}
-                  {mappingError && (
-                    <p className="mt-2 text-sm text-rose-600">{mappingError}</p>
                   )}
                 </div>
               ) : (
@@ -542,40 +480,70 @@ const MeetingDetailsPage: React.FC = () => {
                   <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start space-x-4">
-                        <button className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition ${
-                          task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 hover:border-indigo-400'
+                        <div className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                          task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
                         }`}>
                           {task.status === 'completed' && <span className="material-icons text-xs">check</span>}
-                        </button>
-                        <div>
-                          <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.title}</h4>
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className={`font-bold text-lg ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                              {task.title}
+                            </h4>
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium border ${priorityColors[task.priority]}`}>
+                              {task.priority}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[task.status]}`}>
+                              {statusLabels[task.status]}
+                            </span>
+                          </div>
                           {task.description && (
                             <p className="text-slate-600 text-sm mt-1">{task.description}</p>
                           )}
-                          <div className="flex flex-wrap gap-4 mt-2">
+                          <div className="flex flex-wrap gap-4 mt-3">
                             <div className="flex items-center text-sm text-slate-500">
                               <span className="material-icons text-[14px] mr-1">person</span> 
-                              {task.assignedToName || task.assignedTo || 'Unassigned'}
+                              {task.assignedToName || task.assignedTo}
+                            </div>
+                            <div className="flex items-center text-sm text-slate-500">
+                              <span className="material-icons text-[14px] mr-1">
+                                {task.taskType === 'file' ? 'attach_file' : 'text_fields'}
+                              </span> 
+                              {task.taskType === 'file' ? 'File upload required' : 'Text response'}
                             </div>
                             {task.dueDate && (
                               <div className="flex items-center text-sm text-slate-500">
-                                <span className="material-icons text-[14px] mr-1">event</span> {task.dueDate}
+                                <span className="material-icons text-[14px] mr-1">event</span> 
+                                Due: {task.dueDate}
                               </div>
                             )}
-                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md ${
-                              task.priority === 'critical' ? 'bg-red-50 text-red-600 border border-red-100' :
-                              task.priority === 'high' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 
-                              task.priority === 'low' ? 'bg-slate-50 text-slate-500 border border-slate-100' :
-                              'bg-amber-50 text-amber-600 border border-amber-100'
-                            }`}>
-                              {task.priority} Priority
-                            </span>
                           </div>
+                          
+                          {/* Show submission if exists */}
+                          {(task.submissionText || task.submissionFileUrl) && (
+                            <div className="mt-3 p-3 bg-green-50 border border-green-100 rounded-lg">
+                              <p className="text-xs font-semibold text-green-700 mb-1">
+                                <span className="material-icons text-xs mr-1 align-middle">check_circle</span>
+                                Submitted by {task.assignedToName}
+                              </p>
+                              {task.submissionText && (
+                                <p className="text-sm text-green-800 mt-1">{task.submissionText}</p>
+                              )}
+                              {task.submissionFileUrl && (
+                                <a
+                                  href={task.submissionFileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
+                                >
+                                  <span className="material-icons text-sm">attach_file</span>
+                                  {task.submissionFileName || 'View attachment'}
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <button className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-slate-50">
-                        <span className="material-icons">more_vert</span>
-                      </button>
                     </div>
                   </div>
                 ))
@@ -588,24 +556,14 @@ const MeetingDetailsPage: React.FC = () => {
                   {/* Toggle for speaker view */}
                   {utterances.length > 0 && (
                     <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center text-sm text-slate-500">
-                          <span className="material-icons text-[16px] mr-2">people</span>
-                          {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
-                        </div>
-                        {videoOcrUsed && (
-                          <span className="px-2 py-1 text-[10px] font-bold bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100">
-                            <span className="material-icons text-[10px] mr-1 align-middle">videocam</span>
-                            Names from video
-                          </span>
-                        )}
+                      <div className="flex items-center text-sm text-slate-500">
+                        <span className="material-icons text-[16px] mr-2">people</span>
+                        {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
                       </div>
                       <button
                         onClick={() => setShowSpeakerView(!showSpeakerView)}
                         className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
-                          showSpeakerView 
-                            ? 'bg-indigo-100 text-indigo-700' 
-                            : 'bg-slate-100 text-slate-600'
+                          showSpeakerView ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'
                         }`}
                       >
                         {showSpeakerView ? 'Speaker View' : 'Plain Text'}
@@ -615,9 +573,12 @@ const MeetingDetailsPage: React.FC = () => {
                   
                   {/* Transcript content */}
                   {showSpeakerView && utterances.length > 0 ? (
-                    <div className="space-y-4">
+                    <div className="space-y-4 max-h-[600px] overflow-y-auto">
                       {utterances.map((utterance, idx) => {
-                        const speakerName = speakerMapping[utterance.speaker] || `Speaker ${utterance.speaker}`;
+                        const speakerMtaiId = speakerMapping[utterance.speaker];
+                        const speakerUser = usersList.find(u => u.mtaiId === speakerMtaiId);
+                        const speakerName = speakerUser?.name || speakerUser?.displayName || speakerMtaiId || `Speaker ${utterance.speaker}`;
+                        
                         const speakerColors: { [key: string]: string } = {
                           'A': 'bg-blue-50 border-blue-200 text-blue-700',
                           'B': 'bg-emerald-50 border-emerald-200 text-emerald-700',
@@ -630,9 +591,7 @@ const MeetingDetailsPage: React.FC = () => {
                         return (
                           <div key={idx} className={`p-4 rounded-lg border ${colorClass}`}>
                             <div className="flex items-center justify-between mb-2">
-                              <span className="font-bold text-sm">
-                                {speakerName}
-                              </span>
+                              <span className="font-bold text-sm">{speakerName}</span>
                               <span className="text-xs opacity-60">
                                 {Math.floor(utterance.start / 60000)}:{String(Math.floor((utterance.start % 60000) / 1000)).padStart(2, '0')}
                               </span>
@@ -643,7 +602,7 @@ const MeetingDetailsPage: React.FC = () => {
                       })}
                     </div>
                   ) : (
-                    <p className="leading-relaxed text-slate-700 whitespace-pre-wrap">{transcript}</p>
+                    <p className="leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[600px] overflow-y-auto">{transcript}</p>
                   )}
                 </div>
               ) : (
@@ -661,6 +620,7 @@ const MeetingDetailsPage: React.FC = () => {
           )}
         </div>
 
+        {/* Sidebar */}
         <div className="space-y-6">
           {/* Status Badge */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -674,21 +634,21 @@ const MeetingDetailsPage: React.FC = () => {
               <p className="text-rose-600 text-sm">{meeting.errorMessage}</p>
             )}
             {meeting.status === 'processing' && (
-              <p className="text-blue-600 text-sm">Your meeting is being processed. Tasks will appear shortly.</p>
+              <p className="text-blue-600 text-sm">Your meeting is being processed...</p>
             )}
             {meeting.status === 'transcribing' && (
-              <p className="text-blue-600 text-sm">Audio is being transcribed. This may take a few minutes.</p>
+              <p className="text-blue-600 text-sm">Audio is being transcribed...</p>
             )}
-            {meeting.status === 'analyzing' && (
-              <p className="text-purple-600 text-sm">Processing meeting transcript...</p>
+            {meeting.status === 'needs_mapping' && (
+              <p className="text-amber-600 text-sm">Please map speakers to employees below.</p>
             )}
-            {meeting.status === 'uploaded' && (
-              <p className="text-amber-600 text-sm">Meeting uploaded. Waiting for processing to begin.</p>
+            {meeting.status === 'completed' && (
+              <p className="text-green-600 text-sm">Meeting processed. Ready for task assignment.</p>
             )}
           </div>
 
-          {/* Speaker Mapping UI - shown when status is needs_mapping */}
-          {meeting.status === 'needs_mapping' && speakers.length > 0 && (
+          {/* Speaker Mapping UI - ONLY shown when status is needs_mapping */}
+          {meeting.status === 'needs_mapping' && speakers.length > 0 && isManager && (
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-2xl border border-amber-200 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <span className="material-icons text-amber-600">people_alt</span>
@@ -696,52 +656,43 @@ const MeetingDetailsPage: React.FC = () => {
               </div>
               <p className="text-sm text-amber-800 mb-4">
                 We detected {speakers.length} speaker{speakers.length !== 1 ? 's' : ''} in this meeting. 
-                Map each speaker to the employee who was speaking. After mapping, you can create tasks manually.
+                Map each speaker to an employee.
               </p>
               
-              {/* Enterprise Rules Notice */}
               <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                 <p className="text-xs text-blue-700">
-                  <span className="font-semibold">Rules:</span> Only employees are shown. You (manager) cannot be assigned. Each employee can only be assigned to one speaker.
+                  <span className="font-semibold">Note:</span> Only employees are shown. Each employee can only be assigned to one speaker.
                 </p>
               </div>
               
               {usersList.length === 0 && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg">
                   <p className="text-sm text-red-700">
-                    <span className="font-semibold">No employees found!</span> Please make sure employees have signed up before mapping speakers.
+                    <span className="font-semibold">No employees found!</span> Employees need to sign up first.
                   </p>
                 </div>
               )}
               
               <div className="space-y-3">
                 {speakers.map((speakerId) => {
-                  const speakerColors: { [key: string]: string } = {
+                  const speakerColorMap: { [key: string]: string } = {
                     'A': 'bg-blue-100 text-blue-700 border-blue-200',
                     'B': 'bg-emerald-100 text-emerald-700 border-emerald-200',
                     'C': 'bg-purple-100 text-purple-700 border-purple-200',
                     'D': 'bg-pink-100 text-pink-700 border-pink-200',
                     'E': 'bg-cyan-100 text-cyan-700 border-cyan-200',
                   };
-                  const colorClass = speakerColors[speakerId] || 'bg-slate-100 text-slate-700 border-slate-200';
+                  const colorClass = speakerColorMap[speakerId] || 'bg-slate-100 text-slate-700 border-slate-200';
                   
-                  // Find selected user for display
                   const selectedMtaiId = pendingMapping[speakerId];
-                  const selectedUser = usersList.find(u => u.mtaiId === selectedMtaiId);
-                  
-                  // Get already-assigned MTAI IDs (excluding current speaker)
                   const alreadyAssigned = Object.entries(pendingMapping)
                     .filter(([key, value]) => key !== speakerId && value)
                     .map(([_, value]) => value);
                   
-                  // Current user's MTAI ID (meeting creator - cannot be assigned)
                   const currentUserMtaiId = (user as any)?.mtaiId;
                   
-                  // Filter available users
                   const availableUsers = usersList.filter(u => {
-                    // Exclude meeting creator (self-assignment not allowed)
                     if (u.mtaiId === currentUserMtaiId) return false;
-                    // Exclude already assigned users (unless it's the current selection)
                     if (alreadyAssigned.includes(u.mtaiId) && u.mtaiId !== selectedMtaiId) return false;
                     return true;
                   });
@@ -758,7 +709,6 @@ const MeetingDetailsPage: React.FC = () => {
                         className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 font-medium"
                       >
                         <option value="">Select employee...</option>
-                        <option value="" disabled className="text-slate-400">── Skip this speaker ──</option>
                         {availableUsers.map((u) => (
                           <option key={u.mtaiId} value={u.mtaiId}>
                             [{u.mtaiId}] {u.name || u.displayName} ({u.email})
@@ -769,28 +719,6 @@ const MeetingDetailsPage: React.FC = () => {
                   );
                 })}
               </div>
-
-              {/* Selected mappings preview */}
-              {Object.values(pendingMapping).some(v => v) && (
-                <div className="mt-4 p-3 bg-white/60 rounded-lg border border-amber-100">
-                  <p className="text-xs font-semibold text-amber-700 mb-2">Preview:</p>
-                  <div className="space-y-1">
-                    {speakers.map((speakerId) => {
-                      const mtaiId = pendingMapping[speakerId];
-                      const selectedUser = usersList.find(u => u.mtaiId === mtaiId);
-                      if (!selectedUser) return null;
-                      return (
-                        <div key={speakerId} className="text-sm text-slate-700">
-                          <span className="font-medium">Speaker {speakerId}</span>
-                          <span className="text-slate-400 mx-2">→</span>
-                          <span className="text-indigo-600 font-mono text-xs">{selectedUser.mtaiId}</span>
-                          <span className="text-slate-500 ml-1">· {selectedUser.displayName}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {mappingError && (
                 <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
@@ -806,105 +734,269 @@ const MeetingDetailsPage: React.FC = () => {
                 {savingMapping ? (
                   <>
                     <span className="animate-spin">⏳</span>
-                    Saving Mapping...
+                    Saving...
                   </>
                 ) : (
                   <>
                     <span className="material-icons text-sm">check</span>
-                    Confirm Speaker Mapping
+                    Confirm Mapping
                   </>
                 )}
               </button>
-              
-              <p className="mt-2 text-xs text-amber-700 text-center">
-                After confirming, you'll be able to manually create tasks for the mapped employees.
-                <br />
-                <span className="text-amber-600">Skipped speakers will not appear in the transcript view.</span>
-              </p>
             </div>
           )}
 
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 className="font-bold text-lg mb-4">Meeting Info</h3>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Date</span>
-                <span className="font-bold">{meeting.date}</span>
-              </div>
-              <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Tasks</span>
-                <span className="font-bold">{tasks.length}</span>
-              </div>
-              {Object.keys(speakerMapping).length > 0 && (
-                <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                  <span className="text-slate-500">Speakers</span>
-                  <span className="font-bold">{Object.keys(speakerMapping).length}</span>
-                </div>
-              )}
-              {meeting.duration && meeting.duration > 0 && (
-                <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                  <span className="text-slate-500">Duration</span>
-                  <span className="font-bold">{Math.floor(meeting.duration / 60)}:{String(Math.floor(meeting.duration % 60)).padStart(2, '0')}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                <span className="text-slate-500">Status</span>
-                <span className="font-bold capitalize">{meeting.status}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Speaker List */}
-          {Object.keys(speakerMapping).length > 0 && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <h3 className="font-bold text-lg mb-4">Participants</h3>
-              <div className="space-y-2">
-                {Object.entries(speakerMapping).map(([id, name]) => {
-                  const speakerColors: { [key: string]: string } = {
-                    'A': 'bg-blue-100 text-blue-700',
-                    'B': 'bg-emerald-100 text-emerald-700',
-                    'C': 'bg-purple-100 text-purple-700',
-                    'D': 'bg-amber-100 text-amber-700',
-                    'E': 'bg-rose-100 text-rose-700',
-                  };
-                  const colorClass = speakerColors[id] || 'bg-slate-100 text-slate-700';
-                  const taskCount = tasks.filter(t => t.assignedTo === name || t.owner === name).length;
-                  
-                  return (
-                    <div key={id} className="flex items-center justify-between py-2">
-                      <div className="flex items-center">
-                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${colorClass}`}>
-                          {id}
-                        </span>
-                        <span className="font-medium text-slate-700">{name}</span>
-                      </div>
-                      {taskCount > 0 && (
-                        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
-                          {taskCount} task{taskCount !== 1 ? 's' : ''}
-                        </span>
-                      )}
+          {/* Meeting Info - shown for completed meetings */}
+          {meeting.status === 'completed' && (
+            <>
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <h3 className="font-bold text-lg mb-4">Meeting Info</h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Date</span>
+                    <span className="font-bold">{meeting.date}</span>
+                  </div>
+                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Tasks</span>
+                    <span className="font-bold">{tasks.length}</span>
+                  </div>
+                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
+                    <span className="text-slate-500">Participants</span>
+                    <span className="font-bold">{Object.keys(speakerMapping).length}</span>
+                  </div>
+                  {meeting.duration && meeting.duration > 0 && (
+                    <div className="flex justify-between text-sm py-2">
+                      <span className="text-slate-500">Duration</span>
+                      <span className="font-bold">{Math.floor(meeting.duration / 60)}:{String(Math.floor(meeting.duration % 60)).padStart(2, '0')}</span>
                     </div>
-                  );
-                })}
+                  )}
+                </div>
               </div>
-            </div>
-          )}
 
-          <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-2xl">
-             <h3 className="font-bold text-indigo-900 mb-2">Automated Next Steps</h3>
-             <ul className="space-y-2 text-sm text-indigo-800">
-               <li className="flex items-start">
-                 <span className="material-icons text-sm mr-2 mt-0.5">auto_awesome</span>
-                 Draft email recap generated
-               </li>
-               <li className="flex items-start">
-                 <span className="material-icons text-sm mr-2 mt-0.5">auto_awesome</span>
-                 Jira tickets synced (2/3)
-               </li>
-             </ul>
-          </div>
+              {/* Participants List */}
+              {Object.keys(speakerMapping).length > 0 && (
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <h3 className="font-bold text-lg mb-4">Participants</h3>
+                  <div className="space-y-2">
+                    {Object.entries(speakerMapping).map(([speakerId, mtaiId]) => {
+                      const employee = usersList.find(u => u.mtaiId === mtaiId);
+                      const speakerColorMap: { [key: string]: string } = {
+                        'A': 'bg-blue-100 text-blue-700',
+                        'B': 'bg-emerald-100 text-emerald-700',
+                        'C': 'bg-purple-100 text-purple-700',
+                        'D': 'bg-amber-100 text-amber-700',
+                        'E': 'bg-rose-100 text-rose-700',
+                      };
+                      const colorClass = speakerColorMap[speakerId] || 'bg-slate-100 text-slate-700';
+                      const taskCount = tasks.filter(t => t.assignedTo === mtaiId).length;
+                      
+                      return (
+                        <div key={speakerId} className="flex items-center justify-between py-2">
+                          <div className="flex items-center">
+                            <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${colorClass}`}>
+                              {speakerId}
+                            </span>
+                            <div>
+                              <span className="font-medium text-slate-700">{employee?.name || employee?.displayName || mtaiId}</span>
+                              <span className="text-xs text-slate-400 ml-2">{mtaiId}</span>
+                            </div>
+                          </div>
+                          {taskCount > 0 && (
+                            <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full">
+                              {taskCount} task{taskCount !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
+
+      {/* Task Creation Modal */}
+      {showTaskModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-slate-100">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-slate-900">Assign New Task</h2>
+                <button
+                  onClick={() => setShowTaskModal(false)}
+                  className="p-2 hover:bg-slate-100 rounded-lg transition"
+                >
+                  <span className="material-icons">close</span>
+                </button>
+              </div>
+              <p className="text-sm text-slate-500 mt-1">
+                For meeting: <span className="font-medium">{meeting.title}</span>
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateTask} className="p-6 space-y-4">
+              {taskError && (
+                <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                  <p className="text-sm text-red-700">{taskError}</p>
+                </div>
+              )}
+
+              {/* Assign To - Only mapped employees */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Assign To <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={assignedEmployee}
+                  onChange={(e) => setAssignedEmployee(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  required
+                >
+                  <option value="">Select a participant...</option>
+                  {mappedEmployees.length > 0 ? (
+                    mappedEmployees.map((emp) => (
+                      <option key={emp.mtaiId} value={emp.mtaiId}>
+                        {emp.name || emp.displayName} ({emp.mtaiId})
+                      </option>
+                    ))
+                  ) : (
+                    usersList.filter(u => u.role === 'employee').map((emp) => (
+                      <option key={emp.mtaiId} value={emp.mtaiId}>
+                        {emp.name || emp.displayName} ({emp.mtaiId})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Task Title */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Task Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={taskTitle}
+                  onChange={(e) => setTaskTitle(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="e.g., Prepare quarterly report"
+                  required
+                />
+              </div>
+
+              {/* Task Description */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={taskDescription}
+                  onChange={(e) => setTaskDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+                  placeholder="Describe what needs to be done..."
+                />
+              </div>
+
+              {/* Task Type */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Response Type <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setTaskType('text')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
+                      taskType === 'text'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className="material-icons text-sm">text_fields</span>
+                    Text Response
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaskType('file')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
+                      taskType === 'file'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className="material-icons text-sm">attach_file</span>
+                    File Upload
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {taskType === 'file' ? 'Employee will need to upload a file (PDF, ZIP, Image)' : 'Employee will provide a text response'}
+                </p>
+              </div>
+
+              {/* Priority */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Priority
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['low', 'medium', 'high', 'critical'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPriority(p)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium capitalize transition ${
+                        priority === p
+                          ? priorityColors[p]
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      } ${priority === p ? 'ring-2 ring-offset-1 ring-slate-300' : ''}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Due Date */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Due Date
+                </label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-4">
+                <button
+                  type="submit"
+                  disabled={creatingTask || !taskTitle.trim() || !assignedEmployee}
+                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition flex items-center justify-center gap-2"
+                >
+                  {creatingTask ? (
+                    <>
+                      <span className="animate-spin">⏳</span>
+                      Creating Task...
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-icons text-sm">add_task</span>
+                      Create Task
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

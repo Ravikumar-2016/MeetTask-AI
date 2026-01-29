@@ -61,6 +61,7 @@ const TaskManagerPage: React.FC = () => {
   const [selectedMeetingId, setSelectedMeetingId] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
+  const [taskType, setTaskType] = useState<'text' | 'file'>('text');
   const [assignedEmployee, setAssignedEmployee] = useState('');
   const [priority, setPriority] = useState<'medium' | 'high' | 'low' | 'critical'>('medium');
   const [dueDate, setDueDate] = useState('');
@@ -83,72 +84,104 @@ const TaskManagerPage: React.FC = () => {
   useEffect(() => {
     if (authLoading || !user?.uid || !isManager) return;
 
-    const meetingsQuery = query(
-      collection(db, 'meetings'),
-      where('userId', '==', user.uid),
-      where('status', '==', 'completed'),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(meetingsQuery, (snapshot) => {
-      const meetingsData: Meeting[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        meetingsData.push({
-          id: doc.id,
-          title: data.title || 'Untitled Meeting',
-          status: data.status,
-          createdAt: data.createdAt,
-          userId: data.userId,
-        } as Meeting);
-      });
-      setMeetings(meetingsData);
-      console.log('[TaskManager] Meetings loaded:', meetingsData.length);
-    });
-
-    return () => unsubscribe();
+    // Simple query without compound index requirement
+    const loadMeetings = async () => {
+      try {
+        const meetingsQuery = query(
+          collection(db, 'meetings'),
+          where('userId', '==', user.uid)
+        );
+        
+        const snapshot = await getDocs(meetingsQuery);
+        const meetingsData: Meeting[] = [];
+        
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Only include completed meetings
+          if (data.status === 'completed') {
+            meetingsData.push({
+              id: doc.id,
+              title: data.title || 'Untitled Meeting',
+              status: data.status,
+              createdAt: data.createdAt,
+              userId: data.userId,
+            } as Meeting);
+          }
+        });
+        
+        // Sort by createdAt descending
+        meetingsData.sort((a, b) => {
+          const aTime = (a.createdAt as any)?.toDate?.()?.getTime() || 0;
+          const bTime = (b.createdAt as any)?.toDate?.()?.getTime() || 0;
+          return bTime - aTime;
+        });
+        
+        setMeetings(meetingsData);
+        console.log('[TaskManager] Meetings loaded:', meetingsData.length);
+      } catch (err) {
+        console.error('[TaskManager] Error loading meetings:', err);
+      }
+    };
+    
+    loadMeetings();
   }, [user?.uid, authLoading, isManager]);
 
   // Load tasks created by this manager
   useEffect(() => {
     if (authLoading || !user?.uid || !isManager) return;
 
-    const tasksQuery = query(
-      collection(db, 'tasks'),
-      where('creatorId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(tasksQuery, (snapshot) => {
-      const tasksData: Task[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        tasksData.push({
-          id: doc.id,
-          meetingId: data.meetingId,
-          meetingTitle: data.meetingTitle,
-          title: data.title,
-          description: data.description,
-          assignedTo: data.assignedTo,
-          assignedToName: data.assignedToName,
-          assignedToEmail: data.assignedToEmail,
-          priority: data.priority,
-          status: data.status,
-          dueDate: data.dueDate,
-          submissionText: data.submissionText,
-          submissionFileUrl: data.submissionFileUrl,
-          submissionFileName: data.submissionFileName,
-          submittedAt: data.submittedAt,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-        } as Task);
-      });
-      setTasks(tasksData);
-      setLoading(false);
-      console.log('[TaskManager] Tasks loaded:', tasksData.length);
-    });
-
-    return () => unsubscribe();
+    // Simple query without compound index requirement
+    const loadTasks = async () => {
+      try {
+        const tasksQuery = query(
+          collection(db, 'tasks'),
+          where('creatorId', '==', user.uid)
+        );
+        
+        const snapshot = await getDocs(tasksQuery);
+        const tasksData: Task[] = [];
+        
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          tasksData.push({
+            id: doc.id,
+            meetingId: data.meetingId,
+            meetingTitle: data.meetingTitle,
+            title: data.title,
+            description: data.description,
+            taskType: data.taskType || 'text',
+            assignedTo: data.assignedTo,
+            assignedToName: data.assignedToName,
+            assignedToEmail: data.assignedToEmail,
+            priority: data.priority,
+            status: data.status,
+            dueDate: data.dueDate,
+            submissionText: data.submissionText,
+            submissionFileUrl: data.submissionFileUrl,
+            submissionFileName: data.submissionFileName,
+            submittedAt: data.submittedAt,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          } as Task);
+        });
+        
+        // Sort by createdAt descending
+        tasksData.sort((a, b) => {
+          const aTime = (a.createdAt as any)?.toDate?.()?.getTime() || 0;
+          const bTime = (b.createdAt as any)?.toDate?.()?.getTime() || 0;
+          return bTime - aTime;
+        });
+        
+        setTasks(tasksData);
+        setLoading(false);
+        console.log('[TaskManager] Tasks loaded:', tasksData.length);
+      } catch (err) {
+        console.error('[TaskManager] Error loading tasks:', err);
+        setLoading(false);
+      }
+    };
+    
+    loadTasks();
   }, [user?.uid, authLoading, isManager]);
 
   // Load employees for assignment dropdown
@@ -221,6 +254,7 @@ const TaskManagerPage: React.FC = () => {
           meetingId: selectedMeetingId,
           title: taskTitle.trim(),
           description: taskDescription.trim(),
+          taskType,
           assignedToMtaiId: assignedEmployee,
           priority,
           dueDate: dueDate || null,
@@ -449,6 +483,42 @@ const TaskManagerPage: React.FC = () => {
                 )}
               </div>
 
+              {/* Task Type */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Response Type *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setTaskType('text')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
+                      taskType === 'text'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className="material-icons text-sm">text_fields</span>
+                    Text Response
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaskType('file')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${
+                      taskType === 'file'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className="material-icons text-sm">attach_file</span>
+                    File Upload
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {taskType === 'file' ? 'Employee will need to upload a file' : 'Employee will provide a text response'}
+                </p>
+              </div>
+
               {/* Priority */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -545,6 +615,12 @@ const TaskManagerPage: React.FC = () => {
                   </div>
                   <p className="text-sm text-slate-500 mb-2">
                     {task.meetingTitle} • Assigned to: <span className="font-medium">{task.assignedToName}</span>
+                    <span className="inline-flex items-center ml-2 text-slate-400">
+                      <span className="material-icons text-[12px] mr-0.5">
+                        {task.taskType === 'file' ? 'attach_file' : 'text_fields'}
+                      </span>
+                      {task.taskType === 'file' ? 'File' : 'Text'}
+                    </span>
                   </p>
                   {task.description && (
                     <p className="text-sm text-slate-600 line-clamp-2">{task.description}</p>

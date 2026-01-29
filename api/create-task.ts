@@ -103,7 +103,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     // Parse request
-    const { meetingId, title, description, assignedToMtaiId, priority, dueDate } = request.body;
+    const { meetingId, title, description, assignedToMtaiId, priority, dueDate, taskType } = request.body;
 
     // Validate required fields
     if (!meetingId) {
@@ -120,9 +120,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const validPriorities = ['critical', 'high', 'medium', 'low'];
     const taskPriority = validPriorities.includes(priority) ? priority : 'medium';
 
+    // Validate task type
+    const validTaskTypes = ['text', 'file'];
+    const validatedTaskType: 'text' | 'file' = validTaskTypes.includes(taskType) ? taskType : 'text';
+
     console.log('📁 Meeting ID:', meetingId);
     console.log('📝 Title:', title);
-    console.log('👤 Assigned to:', assignedToMtaiId);
+    console.log('� Task Type:', validatedTaskType);
+    console.log('�👤 Assigned to:', assignedToMtaiId);
 
     // Get meeting to verify ownership and status
     const meetingRef = db.collection('meetings').doc(meetingId);
@@ -174,6 +179,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       // Task details
       title: title.trim(),
       description: (description || '').trim(),
+      taskType: validatedTaskType,
       priority: taskPriority,
       status: 'pending',
       dueDate: dueDate || null,
