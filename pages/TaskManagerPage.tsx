@@ -24,7 +24,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Task, Meeting, FirestoreUser } from '../types';
 import { useToast } from '../hooks/useToast';
 import ToastContainer from '../components/ToastContainer';
-import { getFileIcon, formatFileSize, canPreviewFile } from '../lib/fileUpload';
+import { getFileIcon, canPreviewFile, openSecureFile } from '../lib/fileUpload';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
@@ -364,13 +364,7 @@ const TaskManagerPage: React.FC = () => {
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <div className="space-y-6">
-        {/* Debug Info - Remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-xs font-mono">
-            <p><strong>Debug:</strong> User UID: {user?.uid} | Tasks loaded: {tasks.length}</p>
-            <p>Meetings loaded: {meetings.length} | Employees: {employees.length}</p>
-          </div>
-        )}
+        
         {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -668,25 +662,21 @@ const TaskManagerPage: React.FC = () => {
                             <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
                             <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Attachment'}</span>
                           </div>
-                          <a
-                            href={task.submissionFileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            onClick={() => openSecureFile(task.id, true).catch(err => alert(err.message))}
                             className="inline-flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
                           >
                             <span className="material-icons text-sm">download</span>
                             Download
-                          </a>
+                          </button>
                           {canPreviewFile(task.submissionFileName || '') && (
-                            <a
-                              href={task.submissionFileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              onClick={() => openSecureFile(task.id, false).catch(err => alert(err.message))}
                               className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
                             >
                               <span className="material-icons text-sm">visibility</span>
                               Preview
-                            </a>
+                            </button>
                           )}
                         </div>
                       )}

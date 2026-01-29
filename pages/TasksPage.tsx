@@ -27,6 +27,8 @@ import {
   formatFileSize, 
   getFileIcon,
   isAllowedFileType,
+  canPreviewFile,
+  openSecureFile,
   UploadProgress 
 } from '../lib/fileUpload';
 import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE } from '../types';
@@ -317,19 +319,29 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               <p className="text-sm text-green-800">{task.submissionText}</p>
             )}
             {task.submissionFileUrl && (
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
                 <span className="text-sm text-green-700 flex-1 truncate">{task.submissionFileName || 'Attachment'}</span>
-                <a
-                  href={task.submissionFileUrl}
-                  download={task.submissionFileName}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                
+                {/* Preview button for PDF/TXT */}
+                {canPreviewFile(task.submissionFileName || '') && (
+                  <button
+                    onClick={() => openSecureFile(task.id, false).catch(err => alert(err.message))}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-medium rounded-lg transition"
+                  >
+                    <span className="material-icons text-sm">visibility</span>
+                    Preview
+                  </button>
+                )}
+                
+                {/* Download button for all files */}
+                <button
+                  onClick={() => openSecureFile(task.id, true).catch(err => alert(err.message))}
                   className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium rounded-lg transition"
                 >
                   <span className="material-icons text-sm">download</span>
                   Download
-                </a>
+                </button>
               </div>
             )}
           </div>

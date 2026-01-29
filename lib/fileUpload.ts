@@ -311,3 +311,68 @@ export function canPreviewFile(fileName: string): boolean {
   const ext = getFileExtension(fileName);
   return ext === 'pdf' || ext === 'txt';
 }
+
+/**
+ * Get secure file URL through our proxy endpoint
+ * This avoids direct Cloudinary URLs which can cause 401 errors
+ */
+export function getSecureFileUrl(taskId: string, download: boolean = false): string {
+  const baseUrl = `/api/file/${taskId}`;
+  return download ? `${baseUrl}?download=true` : baseUrl;
+}
+
+/**
+ * Open file in new tab (for preview) or trigger download
+ * Uses our proxy endpoint with authentication
+ */
+export async function openSecureFile(taskId: string, download: boolean = false): Promise<void> {
+  try {
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) {
+      throw new Error('Not authenticated');
+    }
+
+    // For download, we need to fetch and create a blob
+    // For preview, we can open in new window with auth header via fetch
+    const url = getSecureFileUrl(taskId, download);
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to load file' }));
+      throw new Error(error.error || 'Failed to load file');
+    }
+
+    // Get the blob
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    if (download) {
+      // Trigger download
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let fileName = 'download';
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/);
+        if (match) fileName = match[1];
+      }
+      
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } else {
+      // Open in new tab for preview
+      window.open(blobUrl, '_blank');
+    }
+  } catch (error: any) {
+    console.error('[FileUpload] Error opening file:', error);
+    throw error;
+  }
+}
