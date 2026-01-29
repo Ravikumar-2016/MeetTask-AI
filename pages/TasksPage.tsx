@@ -317,15 +317,20 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               <p className="text-sm text-green-800">{task.submissionText}</p>
             )}
             {task.submissionFileUrl && (
-              <a
-                href={task.submissionFileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
-              >
-                <span className="material-icons text-sm">{getFileIcon(task.submissionFileName || '')}</span>
-                {task.submissionFileName || 'View attachment'}
-              </a>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
+                <span className="text-sm text-green-700 flex-1 truncate">{task.submissionFileName || 'Attachment'}</span>
+                <a
+                  href={task.submissionFileUrl}
+                  download={task.submissionFileName}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium rounded-lg transition"
+                >
+                  <span className="material-icons text-sm">download</span>
+                  Download
+                </a>
+              </div>
             )}
           </div>
         )}

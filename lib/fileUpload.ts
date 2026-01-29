@@ -196,9 +196,11 @@ export async function uploadFileToCloudinary(
     console.log('[FileUpload] Timestamp:', signData.timestamp);
 
     // Step 2: Upload to Cloudinary
-    // IMPORTANT: Only send params that were signed (folder, public_id, timestamp)
+    // IMPORTANT: Send params that were signed in alphabetical order
+    // access_mode=public allows direct URL access without authentication
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('access_mode', 'public');
     formData.append('api_key', signData.apiKey);
     formData.append('folder', signData.folder);
     formData.append('public_id', signData.publicId);

@@ -222,7 +222,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     // Parameters to sign - MUST match exactly what frontend sends
     // Cloudinary requires alphabetical order for signature
+    // access_mode=public allows direct URL access without authentication
     const paramsToSign: Record<string, string | number> = {
+      access_mode: 'public',
       folder,
       public_id: uniqueId,
       timestamp,
@@ -235,7 +237,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.log('   Folder:', folder);
     console.log('   Public ID:', uniqueId);
     console.log('   Timestamp:', timestamp);
-    console.log('   Params to sign:', JSON.stringify(paramsToSign));
+    console.log('   Access Mode: public');
 
     return response.status(200).json({
       success: true,
