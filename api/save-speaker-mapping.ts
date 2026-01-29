@@ -19,10 +19,8 @@
  * }
  */
 
-// Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
-export const config = {
-  runtime: 'nodejs',
-};
+// CRITICAL: Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
+export const runtime = "nodejs";
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
@@ -32,7 +30,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 // ============================================
 // GEMINI CONFIG (Official SDK)
 // ============================================
-const GEMINI_MODEL = 'gemini-2.0-flash'; // Fast, free-tier model
+// Using gemini-pro-latest - stable, API-enabled model
+const GEMINI_MODEL = 'gemini-pro-latest';
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -397,6 +396,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const transcriptText = transcript.formattedTranscript || transcript.text || '';
     console.log('📄 Transcript length:', transcriptText.length, 'chars');
     
+    // Track if Gemini extraction actually failed (vs just finding no tasks)
+    let geminiError: string | null = null;
+    
     if (transcriptText.length > 50) {
       if (process.env.GEMINI_API_KEY) {
         try {
@@ -406,12 +408,28 @@ export default async function handler(request: VercelRequest, response: VercelRe
             mtaiIdToName
           );
           console.log('✅ Gemini extraction completed, tasks:', extractedTasks.length);
-        } catch (geminiError: any) {
-          console.error('❌ Gemini extraction failed:', geminiError.message);
-          // Don't fail the whole operation - just log and continue with 0 tasks
+        } catch (err: any) {
+          geminiError = err.message;
+          console.error('❌ Gemini extraction FAILED:', geminiError);
+          // CRITICAL: Set error status and STOP pipeline
+          await meetingRef.update({
+            status: 'task_extraction_failed',
+            errorMessage: `Gemini AI failed: ${geminiError}`,
+            speakerMapping,
+            speakerMappingComplete: true,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          
+          return response.status(200).json({
+            success: false,
+            error: 'Task extraction failed',
+            errorDetails: geminiError,
+            status: 'task_extraction_failed',
+          });
         }
       } else {
         console.error('❌ GEMINI_API_KEY not configured - cannot extract tasks');
+        geminiError = 'GEMINI_API_KEY not configured';
       }
     } else {
       console.warn('⚠️ Transcript too short for task extraction');
@@ -485,9 +503,22 @@ export default async function handler(request: VercelRequest, response: VercelRe
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    // Update meeting to completed
+    // CRITICAL: Determine correct status based on extraction result
+    // Don't mark as completed if Gemini failed (0 tasks from extraction failure)
+    let finalStatus: string;
+    if (savedTasks.length > 0) {
+      finalStatus = 'completed';
+    } else if (transcriptText.length < 50) {
+      finalStatus = 'no_tasks_found'; // Transcript too short
+    } else {
+      // Gemini was called but returned 0 tasks - could be failure or genuinely no tasks
+      // Check if GEMINI_API_KEY exists to distinguish
+      finalStatus = process.env.GEMINI_API_KEY ? 'no_tasks_found' : 'task_extraction_failed';
+    }
+
+    // Update meeting with correct status
     await meetingRef.update({
-      status: 'completed',
+      status: finalStatus,
       speakerMapping,
       speakerMappingComplete: true,
       taskCount: savedTasks.length,
@@ -495,9 +526,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    console.log('\n✅ Speaker mapping saved & tasks extracted!');
+    console.log('\n✅ Speaker mapping saved!');
     console.log('   - Tasks:', savedTasks.length);
-    console.log('   - Status: completed');
+    console.log('   - Status:', finalStatus);
 
     // ============================================
     // ASYNC EMAIL NOTIFICATIONS
@@ -534,7 +565,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       success: true,
       tasks: savedTasks,
       tasksExtracted: savedTasks.length,
-      status: 'completed',
+      status: finalStatus,
     });
 
   } catch (error: any) {

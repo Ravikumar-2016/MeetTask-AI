@@ -19,10 +19,8 @@
  * }
  */
 
-// Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
-export const config = {
-  runtime: 'nodejs',
-};
+// CRITICAL: Force Node.js runtime - Edge runtime forces v1beta which breaks Gemini SDK
+export const runtime = "nodejs";
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { adminDb } from './_lib/firebaseAdmin';
