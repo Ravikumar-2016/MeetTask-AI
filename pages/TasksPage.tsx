@@ -5,7 +5,7 @@
  * Allows employees to:
  * - View assigned tasks
  * - Update task status
- * - Submit work (text response + file upload)
+ * - Submit work (text response + optional file upload)
  * 
  * Managers should use TaskManagerPage instead.
  */
@@ -21,6 +21,15 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { 
+  uploadFileToCloudinary, 
+  validateFile, 
+  formatFileSize, 
+  getFileIcon,
+  isAllowedFileType,
+  UploadProgress 
+} from '../lib/fileUpload';
+import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE } from '../types';
 
 // ============================================
 // TYPES
@@ -39,6 +48,7 @@ interface Task {
   creatorName?: string;
   priority: TaskPriority;
   status: TaskStatus;
+  requiresFile?: boolean;
   dueDate?: string;
   submissionText?: string;
   submissionFileUrl?: string;
@@ -47,11 +57,13 @@ interface Task {
   createdAt?: string;
 }
 
-// ============================================
-// CLOUDINARY CONFIG
-// ============================================
-const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'demo';
-const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'ml_default';
+interface UploadedFileInfo {
+  url: string;
+  name: string;
+  size: number;
+  type: string;
+  publicId?: string;
+}
 
 // ============================================
 // HELPERS
@@ -115,7 +127,7 @@ const statusLabels: Record<TaskStatus, string> = {
 interface TaskCardProps {
   task: Task;
   onStatusChange: (taskId: string, newStatus: TaskStatus) => void;
-  onSubmit: (taskId: string, text: string, fileUrl?: string, fileName?: string) => void;
+  onSubmit: (taskId: string, text: string, file?: UploadedFileInfo) => void;
   updating: boolean;
 }
 
@@ -123,72 +135,95 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
   const [expanded, setExpanded] = useState(false);
   const [submissionText, setSubmissionText] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<{ url: string; name: string } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<UploadedFileInfo | null>(null);
   const [showSubmitForm, setShowSubmitForm] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed';
   const hasSubmission = task.submissionText || task.submissionFileUrl;
 
-  // Handle file upload to Cloudinary
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file selection and upload
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file size (max 50MB)
-    if (file.size > 50 * 1024 * 1024) {
-      setSubmitError('File size must be less than 50MB');
+    // Reset file input
+    e.target.value = '';
+
+    // Validate file
+    const validation = validateFile(file);
+    if (!validation.valid) {
+      setSubmitError(validation.error || 'Invalid file');
       return;
     }
 
     setUploading(true);
     setSubmitError('');
+    setUploadProgress(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-      formData.append('folder', 'task-submissions');
-
-      const response = await fetch(
-        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
-        { method: 'POST', body: formData }
+      console.log('[TaskCard] Starting file upload:', file.name);
+      
+      const result = await uploadFileToCloudinary(
+        file,
+        task.id,
+        task.meetingId,
+        (progress) => {
+          setUploadProgress(progress);
+        }
       );
 
-      if (!response.ok) throw new Error('Upload failed');
+      if (!result.success) {
+        throw new Error(result.error || 'Upload failed');
+      }
 
-      const data = await response.json();
+      console.log('[TaskCard] Upload successful:', result.fileUrl);
+      
       setUploadedFile({
-        url: data.secure_url,
-        name: file.name,
+        url: result.fileUrl!,
+        name: result.fileName!,
+        size: result.fileSize!,
+        type: result.fileType!,
+        publicId: result.publicId,
       });
+      
     } catch (err: any) {
-      console.error('Upload error:', err);
-      setSubmitError('Failed to upload file. Please try again.');
+      console.error('[TaskCard] Upload error:', err);
+      setSubmitError(err.message || 'Failed to upload file. Please try again.');
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
-  }, []);
+  }, [task.id, task.meetingId]);
 
   // Handle submission
   const handleSubmit = useCallback(() => {
-    if (!submissionText.trim() && !uploadedFile) {
-      setSubmitError('Please provide a response or upload a file');
+    // Text is always required
+    if (!submissionText.trim()) {
+      setSubmitError('Please provide a text response describing your work');
       return;
     }
 
-    onSubmit(
-      task.id,
-      submissionText.trim(),
-      uploadedFile?.url,
-      uploadedFile?.name
-    );
+    // Check if file is required
+    if (task.requiresFile && !uploadedFile) {
+      setSubmitError('This task requires a file upload');
+      return;
+    }
+
+    onSubmit(task.id, submissionText.trim(), uploadedFile || undefined);
 
     // Reset form
     setSubmissionText('');
     setUploadedFile(null);
     setShowSubmitForm(false);
-  }, [task.id, submissionText, uploadedFile, onSubmit]);
+    setSubmitError('');
+  }, [task.id, task.requiresFile, submissionText, uploadedFile, onSubmit]);
+
+  // Remove uploaded file
+  const removeUploadedFile = useCallback(() => {
+    setUploadedFile(null);
+  }, []);
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm transition-all ${
@@ -231,6 +266,13 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                   <span className={`text-xs flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
                     <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'event'}</span>
                     {formatDate(task.dueDate)}
+                  </span>
+                )}
+
+                {task.requiresFile && (
+                  <span className="text-xs flex items-center gap-1 text-orange-600">
+                    <span className="material-icons text-[14px]">attach_file</span>
+                    File required
                   </span>
                 )}
 
@@ -281,7 +323,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
               >
-                <span className="material-icons text-sm">attach_file</span>
+                <span className="material-icons text-sm">{getFileIcon(task.submissionFileName || '')}</span>
                 {task.submissionFileName || 'View attachment'}
               </a>
             )}
@@ -294,60 +336,111 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Submit Your Work</h4>
             
             {submitError && (
-              <div className="mb-3 p-2 bg-red-50 border border-red-100 rounded-lg">
+              <div className="mb-3 p-3 bg-red-50 border border-red-100 rounded-lg">
                 <p className="text-sm text-red-700">{submitError}</p>
               </div>
             )}
 
-            <textarea
-              value={submissionText}
-              onChange={(e) => setSubmissionText(e.target.value)}
-              placeholder="Describe what you've done, provide links, or explain your solution..."
-              rows={3}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-            />
+            {/* Text response - always required */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Response <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={submissionText}
+                onChange={(e) => setSubmissionText(e.target.value)}
+                placeholder="Describe what you've done, provide links, or explain your solution..."
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+              />
+            </div>
 
-            {/* File upload */}
-            <div className="mt-3">
+            {/* File upload section */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                File Attachment {task.requiresFile ? <span className="text-red-500">*</span> : '(optional)'}
+              </label>
+              
               {!uploadedFile ? (
-                <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition">
-                  <span className="material-icons text-slate-400">upload_file</span>
-                  <span className="text-sm text-slate-600">
-                    {uploading ? 'Uploading...' : 'Attach file (optional)'}
-                  </span>
-                  <input
-                    type="file"
-                    onChange={handleFileUpload}
-                    disabled={uploading}
-                    className="hidden"
-                    accept="*/*"
-                  />
-                </label>
+                <div>
+                  <label className={`flex items-center gap-2 px-3 py-3 border-2 border-dashed rounded-lg cursor-pointer transition ${
+                    uploading 
+                      ? 'border-indigo-300 bg-indigo-50' 
+                      : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50'
+                  }`}>
+                    {uploading ? (
+                      <>
+                        <span className="animate-spin material-icons text-indigo-500">hourglass_empty</span>
+                        <div className="flex-1">
+                          <span className="text-sm text-indigo-600">
+                            Uploading... {uploadProgress ? `${uploadProgress.percentage}%` : ''}
+                          </span>
+                          {uploadProgress && (
+                            <div className="mt-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-indigo-500 transition-all duration-300"
+                                style={{ width: `${uploadProgress.percentage}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-icons text-slate-400">upload_file</span>
+                        <span className="text-sm text-slate-600">
+                          Click to attach file
+                        </span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      onChange={handleFileSelect}
+                      disabled={uploading}
+                      className="hidden"
+                      accept=".pdf,.docx,.xlsx,.zip,.txt"
+                    />
+                  </label>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Allowed: {ALLOWED_FILE_EXTENSIONS.map(e => e.toUpperCase()).join(', ')} • Max {formatFileSize(MAX_FILE_SIZE)}
+                  </p>
+                </div>
               ) : (
-                <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
-                  <span className="material-icons text-green-600 text-sm">check_circle</span>
-                  <span className="text-sm text-green-700 flex-1 truncate">{uploadedFile.name}</span>
+                <div className="flex items-center gap-3 px-3 py-3 bg-green-50 border border-green-200 rounded-lg">
+                  <span className="material-icons text-green-600">{getFileIcon(uploadedFile.name)}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-green-700 truncate">{uploadedFile.name}</p>
+                    <p className="text-xs text-green-600">{formatFileSize(uploadedFile.size)}</p>
+                  </div>
                   <button
-                    onClick={() => setUploadedFile(null)}
-                    className="text-green-600 hover:text-green-800"
+                    onClick={removeUploadedFile}
+                    className="p-1 text-green-600 hover:text-green-800 hover:bg-green-100 rounded transition"
+                    title="Remove file"
                   >
                     <span className="material-icons text-sm">close</span>
                   </button>
                 </div>
               )}
-              <p className="text-xs text-slate-500 mt-1">
-                Supports any file type including ZIP. Max 50MB.
-              </p>
             </div>
 
             {/* Submit button */}
-            <div className="flex gap-2 mt-4">
+            <div className="flex gap-2">
               <button
                 onClick={handleSubmit}
-                disabled={updating || uploading || (!submissionText.trim() && !uploadedFile)}
-                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+                disabled={updating || uploading || !submissionText.trim() || (task.requiresFile && !uploadedFile)}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition flex items-center justify-center gap-2"
               >
-                {updating ? 'Submitting...' : 'Submit'}
+                {updating ? (
+                  <>
+                    <span className="animate-spin material-icons text-sm">hourglass_empty</span>
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-icons text-sm">send</span>
+                    Submit
+                  </>
+                )}
               </button>
               <button
                 onClick={() => {
@@ -356,7 +449,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                   setUploadedFile(null);
                   setSubmitError('');
                 }}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition"
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition"
               >
                 Cancel
               </button>
@@ -451,6 +544,7 @@ const TasksPage: React.FC = () => {
             creatorName: data.creatorName,
             priority: data.priority || 'medium',
             status: data.status || 'pending',
+            requiresFile: data.requiresFile || false,
             dueDate: data.dueDate,
             submissionText: data.submissionText,
             submissionFileUrl: data.submissionFileUrl,
@@ -510,7 +604,7 @@ const TasksPage: React.FC = () => {
   }, []);
 
   // Handle submission
-  const handleSubmit = useCallback(async (taskId: string, text: string, fileUrl?: string, fileName?: string) => {
+  const handleSubmit = useCallback(async (taskId: string, text: string, file?: UploadedFileInfo) => {
     setUpdating(true);
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -525,8 +619,11 @@ const TasksPage: React.FC = () => {
         body: JSON.stringify({
           taskId,
           submissionText: text,
-          submissionFileUrl: fileUrl,
-          submissionFileName: fileName,
+          submissionFileUrl: file?.url,
+          submissionFileName: file?.name,
+          submissionFileSize: file?.size,
+          submissionFileType: file?.type,
+          cloudinaryPublicId: file?.publicId,
         }),
       });
 
@@ -534,6 +631,9 @@ const TasksPage: React.FC = () => {
         const error = await res.json();
         throw new Error(error.error || 'Failed to submit');
       }
+      
+      // Show success (task list will update via real-time listener)
+      console.log('[TasksPage] Task submitted successfully');
     } catch (err: any) {
       console.error('[TasksPage] Submit error:', err);
       setError(err.message);

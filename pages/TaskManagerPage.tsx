@@ -24,6 +24,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Task, Meeting, FirestoreUser } from '../types';
 import { useToast } from '../hooks/useToast';
 import ToastContainer from '../components/ToastContainer';
+import { getFileIcon, formatFileSize, canPreviewFile } from '../lib/fileUpload';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
@@ -662,15 +663,32 @@ const TaskManagerPage: React.FC = () => {
                       <p className="text-xs font-semibold text-green-700 mb-1">Employee Submission:</p>
                       <p className="text-sm text-green-800">{task.submissionText}</p>
                       {task.submissionFileUrl && (
-                        <a
-                          href={task.submissionFileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 mt-2 text-sm text-green-700 hover:text-green-800 underline"
-                        >
-                          <span className="material-icons text-sm">attach_file</span>
-                          {task.submissionFileName || 'View attachment'}
-                        </a>
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-green-200 rounded-lg">
+                            <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
+                            <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Attachment'}</span>
+                          </div>
+                          <a
+                            href={task.submissionFileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+                          >
+                            <span className="material-icons text-sm">download</span>
+                            Download
+                          </a>
+                          {canPreviewFile(task.submissionFileName || '') && (
+                            <a
+                              href={task.submissionFileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
+                            >
+                              <span className="material-icons text-sm">visibility</span>
+                              Preview
+                            </a>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

@@ -103,15 +103,23 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     // Parse request
-    const { taskId, submissionText, submissionFileUrl, submissionFileName } = request.body;
+    const { 
+      taskId, 
+      submissionText, 
+      submissionFileUrl, 
+      submissionFileName,
+      submissionFileSize,
+      submissionFileType,
+      cloudinaryPublicId,
+    } = request.body;
 
     if (!taskId) {
       return response.status(400).json({ error: 'Task ID is required' });
     }
 
-    // Must provide either text or file
-    if (!submissionText && !submissionFileUrl) {
-      return response.status(400).json({ error: 'Please provide a response or upload a file' });
+    // Text response is always required
+    if (!submissionText || !submissionText.trim()) {
+      return response.status(400).json({ error: 'Text response is required' });
     }
 
     console.log('📝 Task ID:', taskId);
@@ -132,23 +140,60 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(403).json({ error: 'You are not assigned to this task' });
     }
 
+    // Check if file is required but not provided
+    if (task.requiresFile && !submissionFileUrl) {
+      return response.status(400).json({ error: 'This task requires a file upload' });
+    }
+
     // Update task with submission
-    await taskRef.update({
-      submissionText: submissionText || null,
-      submissionFileUrl: submissionFileUrl || null,
-      submissionFileName: submissionFileName || null,
+    const updateData: Record<string, any> = {
+      submissionText: submissionText.trim(),
       submittedAt: FieldValue.serverTimestamp(),
       status: 'completed',
       updatedAt: FieldValue.serverTimestamp(),
-    });
+    };
+
+    // Add file data if provided
+    if (submissionFileUrl) {
+      updateData.submissionFileUrl = submissionFileUrl;
+      updateData.submissionFileName = submissionFileName || 'attachment';
+      updateData.submissionFileSize = submissionFileSize || null;
+      updateData.submissionFileType = submissionFileType || null;
+
+      // Save file metadata to dedicated collection
+      const fileData = {
+        fileId: cloudinaryPublicId || `file_${Date.now()}`,
+        taskId: taskId,
+        meetingId: task.meetingId,
+        uploaderId: userId,
+        uploaderMtaiId: userMtaiId,
+        uploaderName: userData.name || userData.displayName || 'Unknown',
+        fileName: submissionFileName || 'attachment',
+        fileExtension: submissionFileName?.split('.').pop()?.toLowerCase() || '',
+        fileType: submissionFileType || 'application/octet-stream',
+        fileSize: submissionFileSize || 0,
+        fileUrl: submissionFileUrl,
+        cloudinaryPublicId: cloudinaryPublicId || null,
+        folder: `meettask/meetings/${task.meetingId}/tasks/${taskId}`,
+        uploadedAt: FieldValue.serverTimestamp(),
+      };
+
+      // Add to taskFiles collection
+      await db.collection('taskFiles').add(fileData);
+      console.log('📁 File metadata saved to taskFiles collection');
+    }
+
+    await taskRef.update(updateData);
 
     console.log('\n✅ Task submission saved!');
     console.log('   - Status: completed');
+    console.log('   - Has file:', !!submissionFileUrl);
 
     return response.status(200).json({
       success: true,
       message: 'Task submitted successfully',
       status: 'completed',
+      hasFile: !!submissionFileUrl,
     });
 
   } catch (error: any) {

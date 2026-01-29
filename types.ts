@@ -214,6 +214,57 @@ export interface Task {
 }
 
 // ============================================
+// TASK FILE TYPES (Cloudinary Storage)
+// ============================================
+
+/**
+ * Allowed file extensions for task uploads
+ */
+export const ALLOWED_FILE_EXTENSIONS = ['pdf', 'docx', 'xlsx', 'zip', 'txt'] as const;
+export type AllowedFileExtension = typeof ALLOWED_FILE_EXTENSIONS[number];
+
+/**
+ * Max file size in bytes (20MB)
+ */
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+/**
+ * Task file metadata - stored in taskFiles collection
+ */
+export interface TaskFile {
+  id: string;                      // Firestore document ID
+  fileId: string;                  // Unique file ID (Cloudinary public_id)
+  taskId: string;                  // Reference to task
+  meetingId: string;               // Reference to meeting
+  uploaderId: string;              // Firebase UID of uploader
+  uploaderMtaiId: string;          // MTAI ID of uploader
+  uploaderName: string;            // Name of uploader
+  fileName: string;                // Original file name
+  fileExtension: string;           // File extension (pdf, docx, etc.)
+  fileType: string;                // MIME type
+  fileSize: number;                // File size in bytes
+  fileUrl: string;                 // Cloudinary secure URL
+  cloudinaryPublicId: string;      // For potential deletion
+  folder: string;                  // Cloudinary folder path
+  uploadedAt: any;                 // Firestore Timestamp
+}
+
+/**
+ * Cloudinary upload signature response
+ */
+export interface CloudinarySignResponse {
+  success: boolean;
+  signature: string;
+  timestamp: number;
+  cloudName: string;
+  apiKey: string;
+  folder: string;
+  publicId: string;
+  allowedFormats: string[];
+  maxFileSize: number;
+}
+
+// ============================================
 // API RESPONSE TYPES
 // ============================================
 
