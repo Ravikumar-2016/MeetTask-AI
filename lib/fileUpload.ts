@@ -1,22 +1,25 @@
 /**
  * fileUpload.ts - Cloudinary File Upload Service
  * 
- * Handles secure file uploads to Cloudinary using signed requests.
+ * Handles file uploads to Cloudinary using unsigned public preset.
+ * Simple, stable approach for task file submissions.
+ * 
  * Features:
- * - Signed uploads (secrets stay on server)
+ * - Direct unsigned uploads (same as meeting uploads)
  * - File type validation
- * - File size validation
+ * - File size validation (20MB max)
  * - Upload progress tracking
- * - Error handling
+ * - Direct Cloudinary URL usage (no backend proxy)
  */
 
 import { auth } from './firebase';
-import { CloudinarySignResponse, ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AllowedFileExtension } from '../types';
+import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AllowedFileExtension } from '../types';
 
 // ============================================
 // CONSTANTS
 // ============================================
-const CLOUDINARY_UPLOAD_URL = 'https://api.cloudinary.com/v1_1';
+const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'dmdyvkf2j';
+const CLOUDINARY_UPLOAD_PRESET = 'meeting_uploads'; // Using existing working preset
 
 // MIME type mapping for validation
 const MIME_TYPE_MAP: Record<AllowedFileExtension, string[]> = {
@@ -47,6 +50,15 @@ export interface UploadProgress {
 }
 
 export type ProgressCallback = (progress: UploadProgress) => void;
+
+interface CloudinaryUploadResponse {
+  secure_url: string;
+  public_id: string;
+  format: string;
+  resource_type: string;
+  bytes: number;
+  folder?: string;
+}
 
 // ============================================
 // VALIDATION HELPERS
@@ -119,46 +131,8 @@ export function validateFile(file: File): { valid: boolean; error?: string } {
 // ============================================
 
 /**
- * Get signed upload parameters from server
- */
-async function getUploadSignature(
-  taskId: string,
-  meetingId: string,
-  fileName: string,
-  fileSize: number,
-  fileType: string
-): Promise<CloudinarySignResponse> {
-  const token = await auth.currentUser?.getIdToken();
-  
-  if (!token) {
-    throw new Error('Not authenticated. Please sign in again.');
-  }
-
-  const response = await fetch('/api/cloudinary-sign', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      taskId,
-      meetingId,
-      fileName,
-      fileSize,
-      fileType,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get upload signature');
-  }
-
-  return response.json();
-}
-
-/**
- * Upload file to Cloudinary with signed request
+ * Upload file directly to Cloudinary using unsigned preset
+ * Simple and stable approach - same as meeting uploads
  */
 export async function uploadFileToCloudinary(
   file: File,
@@ -176,112 +150,78 @@ export async function uploadFileToCloudinary(
   }
 
   try {
-    // Step 1: Get signed upload parameters
-    console.log('[FileUpload] Getting upload signature...');
-    const signData = await getUploadSignature(
-      taskId,
-      meetingId,
-      file.name,
-      file.size,
-      file.type
-    );
-
-    if (!signData.success) {
-      throw new Error('Failed to get upload authorization');
-    }
-
-    console.log('[FileUpload] Signature received');
-    console.log('[FileUpload] Folder:', signData.folder);
-    console.log('[FileUpload] Public ID:', signData.publicId);
-    console.log('[FileUpload] Timestamp:', signData.timestamp);
-
-    // Step 2: Upload to Cloudinary
-    // IMPORTANT: Send params that were signed in alphabetical order
-    // access_mode=public allows direct URL access without authentication
+    // Prepare form data for unsigned upload
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('access_mode', 'public');
-    formData.append('api_key', signData.apiKey);
-    formData.append('folder', signData.folder);
-    formData.append('public_id', signData.publicId);
-    formData.append('timestamp', signData.timestamp.toString());
-    formData.append('signature', signData.signature);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    formData.append('folder', `meettask/tasks/${taskId}`); // Organize by task
+    
+    // Use raw endpoint for document files
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`;
+    console.log('[FileUpload] Uploading to Cloudinary raw endpoint...');
+    console.log('[FileUpload] Folder: meettask/tasks/' + taskId);
 
-    // Use XMLHttpRequest for progress tracking
-    const result = await new Promise<FileUploadResult>((resolve, reject) => {
+    // Upload with XMLHttpRequest for progress tracking
+    const response = await new Promise<CloudinaryUploadResponse>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      
+
       // Track upload progress
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable && onProgress) {
-          onProgress({
+          const progress: UploadProgress = {
             loaded: event.loaded,
             total: event.total,
             percentage: Math.round((event.loaded / event.total) * 100),
-          });
+          };
+          onProgress(progress);
+          console.log(`[FileUpload] Progress: ${progress.percentage}%`);
         }
       });
 
-      // Handle completion
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            console.log('[FileUpload] Upload successful:', data.secure_url);
-            resolve({
-              success: true,
-              fileUrl: data.secure_url,
-              fileName: file.name,
-              fileSize: file.size,
-              fileType: file.type,
-              publicId: data.public_id,
-            });
-          } catch (e) {
-            reject(new Error('Invalid response from upload server'));
-          }
+          const uploadResponse: CloudinaryUploadResponse = JSON.parse(xhr.responseText);
+          console.log('[FileUpload] Upload successful!');
+          console.log('[FileUpload] URL:', uploadResponse.secure_url);
+          console.log('[FileUpload] Public ID:', uploadResponse.public_id);
+          resolve(uploadResponse);
         } else {
-          let errorMessage = 'Upload failed';
-          try {
-            const errorData = JSON.parse(xhr.responseText);
-            errorMessage = errorData.error?.message || errorMessage;
-          } catch {}
-          reject(new Error(errorMessage));
+          console.error('[FileUpload] Upload failed:', xhr.status, xhr.responseText);
+          reject(new Error(`Upload failed with status ${xhr.status}`));
         }
       });
 
-      // Handle errors
       xhr.addEventListener('error', () => {
-        reject(new Error('Network error. Please check your connection.'));
+        console.error('[FileUpload] Network error during upload');
+        reject(new Error('Network error during upload'));
       });
 
-      xhr.addEventListener('abort', () => {
-        reject(new Error('Upload was cancelled'));
-      });
-
-      xhr.addEventListener('timeout', () => {
-        reject(new Error('Upload timed out. Please try again.'));
-      });
-
-      // Set timeout (5 minutes for large files)
-      xhr.timeout = 5 * 60 * 1000;
-
-      // Send request - Use 'raw' resource type for documents (pdf, docx, xlsx, zip, txt)
-      // This ensures proper delivery and avoids image transformation issues
-      const uploadUrl = `${CLOUDINARY_UPLOAD_URL}/${signData.cloudName}/raw/upload`;
       xhr.open('POST', uploadUrl);
       xhr.send(formData);
     });
 
-    return result;
+    // Return success result with direct Cloudinary URL
+    return {
+      success: true,
+      fileUrl: response.secure_url,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      publicId: response.public_id,
+    };
 
   } catch (error: any) {
     console.error('[FileUpload] Error:', error);
     return {
       success: false,
-      error: error.message || 'Failed to upload file. Please try again.',
+      error: error.message || 'Upload failed',
     };
   }
 }
+
+// ============================================
+// HELPER FUNCTIONS FOR UI
+// ============================================
 
 /**
  * Get file icon based on extension
@@ -313,67 +253,20 @@ export function canPreviewFile(fileName: string): boolean {
 }
 
 /**
- * Get secure file URL through our proxy endpoint
- * This avoids direct Cloudinary URLs which can cause 401 errors
- * Uses submit-task endpoint with GET method and Cloudinary SDK authentication
+ * Open file in new tab - uses direct Cloudinary URL
  */
-export function getSecureFileUrl(taskId: string, download: boolean = false): string {
-  const baseUrl = `/api/submit-task?taskId=${taskId}`;
-  return download ? `${baseUrl}&download=true` : baseUrl;
-}
-
-/**
- * Open file in new tab (for preview) or trigger download
- * Uses our proxy endpoint with authentication
- */
-export async function openSecureFile(taskId: string, download: boolean = false): Promise<void> {
-  try {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) {
-      throw new Error('Not authenticated');
-    }
-
-    // For download, we need to fetch and create a blob
-    // For preview, we can open in new window with auth header via fetch
-    const url = getSecureFileUrl(taskId, download);
-    
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to load file' }));
-      throw new Error(error.error || 'Failed to load file');
-    }
-
-    // Get the blob
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    if (download) {
-      // Trigger download
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let fileName = 'download';
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="(.+)"/);
-        if (match) fileName = match[1];
-      }
-      
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } else {
-      // Open in new tab for preview
-      window.open(blobUrl, '_blank');
-    }
-  } catch (error: any) {
-    console.error('[FileUpload] Error opening file:', error);
-    throw error;
+export function openFile(fileUrl: string, fileName: string, forceDownload: boolean = false): void {
+  if (forceDownload) {
+    // Force download
+    const link = document.createElement('a');
+    link.href = fileUrl;
+    link.download = fileName;
+    link.target = '_blank';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } else {
+    // Open in new tab for preview
+    window.open(fileUrl, '_blank');
   }
 }

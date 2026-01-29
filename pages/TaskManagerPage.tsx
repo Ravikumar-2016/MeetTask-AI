@@ -24,7 +24,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Task, Meeting, FirestoreUser } from '../types';
 import { useToast } from '../hooks/useToast';
 import ToastContainer from '../components/ToastContainer';
-import { getFileIcon, canPreviewFile, openSecureFile } from '../lib/fileUpload';
+import { getFileIcon, canPreviewFile, openFile } from '../lib/fileUpload';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
@@ -663,7 +663,7 @@ const TaskManagerPage: React.FC = () => {
                             <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Attachment'}</span>
                           </div>
                           <button
-                            onClick={() => openSecureFile(task.id, true).catch(err => alert(err.message))}
+                            onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', true)}
                             className="inline-flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
                           >
                             <span className="material-icons text-sm">download</span>
@@ -671,7 +671,7 @@ const TaskManagerPage: React.FC = () => {
                           </button>
                           {canPreviewFile(task.submissionFileName || '') && (
                             <button
-                              onClick={() => openSecureFile(task.id, false).catch(err => alert(err.message))}
+                              onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', false)}
                               className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
                             >
                               <span className="material-icons text-sm">visibility</span>

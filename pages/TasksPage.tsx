@@ -28,7 +28,7 @@ import {
   getFileIcon,
   isAllowedFileType,
   canPreviewFile,
-  openSecureFile,
+  openFile,
   UploadProgress 
 } from '../lib/fileUpload';
 import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE } from '../types';
@@ -324,9 +324,9 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 <span className="text-sm text-green-700 flex-1 truncate">{task.submissionFileName || 'Attachment'}</span>
                 
                 {/* Preview button for PDF/TXT */}
-                {canPreviewFile(task.submissionFileName || '') && (
+                {canPreviewFile(task.submissionFileName || '') && task.submissionFileUrl && (
                   <button
-                    onClick={() => openSecureFile(task.id, false).catch(err => alert(err.message))}
+                    onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', false)}
                     className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-medium rounded-lg transition"
                   >
                     <span className="material-icons text-sm">visibility</span>
@@ -335,13 +335,15 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 )}
                 
                 {/* Download button for all files */}
-                <button
-                  onClick={() => openSecureFile(task.id, true).catch(err => alert(err.message))}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium rounded-lg transition"
-                >
-                  <span className="material-icons text-sm">download</span>
-                  Download
-                </button>
+                {task.submissionFileUrl && (
+                  <button
+                    onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', true)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium rounded-lg transition"
+                  >
+                    <span className="material-icons text-sm">download</span>
+                    Download
+                  </button>
+                )}
               </div>
             )}
           </div>
