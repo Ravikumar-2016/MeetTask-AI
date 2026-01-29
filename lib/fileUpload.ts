@@ -19,7 +19,9 @@ import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AllowedFileExtension } from '..
 // CONSTANTS
 // ============================================
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'dmdyvkf2j';
-const CLOUDINARY_UPLOAD_PRESET = 'meeting_uploads'; // Using existing working preset
+// Use task_files_upload preset if available, fallback to meeting_uploads
+// Make sure the preset is configured as "unsigned" and allows "raw" resource type
+const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_TASK_PRESET || 'meeting_uploads';
 
 // MIME type mapping for validation
 const MIME_TYPE_MAP: Record<AllowedFileExtension, string[]> = {
@@ -155,11 +157,17 @@ export async function uploadFileToCloudinary(
     formData.append('file', file);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
     formData.append('folder', `meettask/tasks/${taskId}`); // Organize by task
+    formData.append('resource_type', 'auto'); // Let Cloudinary detect the file type
     
-    // Use raw endpoint for document files
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`;
-    console.log('[FileUpload] Uploading to Cloudinary raw endpoint...');
-    console.log('[FileUpload] Folder: meettask/tasks/' + taskId);
+    // Use auto endpoint which works for all file types
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+    console.log('[FileUpload] Upload Configuration:');
+    console.log('  - Cloud Name:', CLOUDINARY_CLOUD_NAME);
+    console.log('  - Upload Preset:', CLOUDINARY_UPLOAD_PRESET);
+    console.log('  - Folder: meettask/tasks/' + taskId);
+    console.log('  - Endpoint:', uploadUrl);
+    console.log('  - Resource Type: auto');
+    console.log('  - File:', file.name, `(${formatFileSize(file.size)})`);
 
     // Upload with XMLHttpRequest for progress tracking
     const response = await new Promise<CloudinaryUploadResponse>((resolve, reject) => {
@@ -180,20 +188,43 @@ export async function uploadFileToCloudinary(
 
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          const uploadResponse: CloudinaryUploadResponse = JSON.parse(xhr.responseText);
-          console.log('[FileUpload] Upload successful!');
-          console.log('[FileUpload] URL:', uploadResponse.secure_url);
-          console.log('[FileUpload] Public ID:', uploadResponse.public_id);
-          resolve(uploadResponse);
+          try {
+            const uploadResponse: CloudinaryUploadResponse = JSON.parse(xhr.responseText);
+            console.log('[FileUpload] Upload successful!');
+            console.log('[FileUpload] URL:', uploadResponse.secure_url);
+            console.log('[FileUpload] Public ID:', uploadResponse.public_id);
+            resolve(uploadResponse);
+          } catch (parseError) {
+            console.error('[FileUpload] Failed to parse response:', xhr.responseText);
+            reject(new Error('Invalid response from upload server. Please check your Cloudinary configuration.'));
+          }
         } else {
-          console.error('[FileUpload] Upload failed:', xhr.status, xhr.responseText);
-          reject(new Error(`Upload failed with status ${xhr.status}`));
+          console.error('[FileUpload] Upload failed:', xhr.status);
+          
+          // Try to parse error response
+          let errorMessage = `Upload failed with status ${xhr.status}`;
+          try {
+            const errorResponse = JSON.parse(xhr.responseText);
+            if (errorResponse.error?.message) {
+              errorMessage = errorResponse.error.message;
+            }
+          } catch {
+            // Response is not JSON (might be HTML error page)
+            if (xhr.responseText.includes('<!DOCTYPE') || xhr.responseText.includes('<html')) {
+              errorMessage = 'Upload server error. Please check your Cloudinary preset configuration.';
+            } else if (xhr.responseText) {
+              errorMessage = `Upload failed: ${xhr.responseText.substring(0, 100)}`;
+            }
+          }
+          
+          console.error('[FileUpload] Error details:', errorMessage);
+          reject(new Error(errorMessage));
         }
       });
 
       xhr.addEventListener('error', () => {
         console.error('[FileUpload] Network error during upload');
-        reject(new Error('Network error during upload'));
+        reject(new Error('Network error during upload. Please check your internet connection.'));
       });
 
       xhr.open('POST', uploadUrl);
