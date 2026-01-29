@@ -241,7 +241,6 @@ const MeetingDetailsPage: React.FC = () => {
         console.error('[MeetingDetails] Task query error:', error);
       }
     );
-    });
 
     return () => unsubscribe();
   }, [id]);
