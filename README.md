@@ -207,9 +207,14 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY----
 # AssemblyAI
 ASSEMBLYAI_API_KEY=your_assemblyai_key
 
-# Cloudinary
+# Cloudinary (Frontend)
 VITE_CLOUDINARY_CLOUD_NAME=your_cloud_name
 VITE_CLOUDINARY_UPLOAD_PRESET=your_upload_preset
+
+# Cloudinary (Backend - for authenticated file access)
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
 
 # App URL (for webhooks)
 VITE_APP_URL=https://your-app.vercel.app
