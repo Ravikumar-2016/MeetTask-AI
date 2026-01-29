@@ -30,9 +30,9 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ============================================
-// GEMINI CONFIG (Official SDK - v1 API)
+// GEMINI CONFIG (Official SDK)
 // ============================================
-const GEMINI_MODEL = 'gemini-1.0-pro'; // Universal free-tier model
+const GEMINI_MODEL = 'gemini-pro'; // Correct SDK model name (free tier)
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
