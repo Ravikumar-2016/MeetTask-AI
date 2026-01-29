@@ -19,9 +19,9 @@ import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AllowedFileExtension } from '..
 // CONSTANTS
 // ============================================
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'dmdyvkf2j';
-// Use task_files_upload preset if available, fallback to meeting_uploads
-// Make sure the preset is configured as "unsigned" and allows "raw" resource type
-const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_TASK_PRESET || 'meeting_uploads';
+// Use task_files_upload preset for documents - this must be an UNSIGNED preset in Cloudinary
+// with allowed formats: pdf, docx, xlsx, zip, txt and resource_type: raw
+const CLOUDINARY_UPLOAD_PRESET = 'task_files_upload';
 
 // MIME type mapping for validation
 const MIME_TYPE_MAP: Record<AllowedFileExtension, string[]> = {
@@ -157,16 +157,16 @@ export async function uploadFileToCloudinary(
     formData.append('file', file);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
     formData.append('folder', `meettask/tasks/${taskId}`); // Organize by task
-    formData.append('resource_type', 'auto'); // Let Cloudinary detect the file type
     
-    // Use auto endpoint which works for all file types
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+    // Use raw endpoint for documents (pdf, docx, xlsx, zip, txt)
+    // The meeting_uploads preset must have "Allowed formats" that includes these
+    // OR create a new unsigned preset that allows all formats
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/raw/upload`;
     console.log('[FileUpload] Upload Configuration:');
     console.log('  - Cloud Name:', CLOUDINARY_CLOUD_NAME);
     console.log('  - Upload Preset:', CLOUDINARY_UPLOAD_PRESET);
     console.log('  - Folder: meettask/tasks/' + taskId);
     console.log('  - Endpoint:', uploadUrl);
-    console.log('  - Resource Type: auto');
     console.log('  - File:', file.name, `(${formatFileSize(file.size)})`);
 
     // Upload with XMLHttpRequest for progress tracking
