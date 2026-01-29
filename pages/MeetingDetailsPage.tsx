@@ -433,13 +433,7 @@ const MeetingDetailsPage: React.FC = () => {
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <div className="space-y-8">
-        {/* Debug Info - Remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-xs font-mono">
-            <p><strong>Debug:</strong> Meeting ID: {id} | Tasks loaded: {tasks.length}</p>
-            <p>User UID: {user?.uid} | Manager: {isManager ? 'Yes' : 'No'}</p>
-          </div>
-        )}
+        
         {/* Header - Clean, no Share/Export */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
