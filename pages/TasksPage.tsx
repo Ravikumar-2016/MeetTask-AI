@@ -22,16 +22,11 @@ import {
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { 
-  uploadFileToCloudinary, 
-  validateFile, 
   formatFileSize, 
   getFileIcon,
-  isAllowedFileType,
   canPreviewFile,
-  openFile,
-  UploadProgress 
+  openFile
 } from '../lib/fileUpload';
-import { ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE } from '../types';
 
 // ============================================
 // TYPES
@@ -59,12 +54,11 @@ interface Task {
   createdAt?: string;
 }
 
-interface UploadedFileInfo {
+interface FileInfo {
   url: string;
   name: string;
   size: number;
   type: string;
-  publicId?: string;
 }
 
 // ============================================
@@ -129,75 +123,19 @@ const statusLabels: Record<TaskStatus, string> = {
 interface TaskCardProps {
   task: Task;
   onStatusChange: (taskId: string, newStatus: TaskStatus) => void;
-  onSubmit: (taskId: string, text: string, file?: UploadedFileInfo) => void;
+  onSubmit: (taskId: string, text: string, file?: FileInfo) => void;
   updating: boolean;
 }
 
 const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, updating }) => {
   const [expanded, setExpanded] = useState(false);
   const [submissionText, setSubmissionText] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
-  const [uploadedFile, setUploadedFile] = useState<UploadedFileInfo | null>(null);
   const [showSubmitForm, setShowSubmitForm] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [driveLink, setDriveLink] = useState('');
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed';
   const hasSubmission = task.submissionText || task.submissionFileUrl;
-
-  // Handle file selection and upload
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Reset file input
-    e.target.value = '';
-
-    // Validate file
-    const validation = validateFile(file);
-    if (!validation.valid) {
-      setSubmitError(validation.error || 'Invalid file');
-      return;
-    }
-
-    setUploading(true);
-    setSubmitError('');
-    setUploadProgress(null);
-
-    try {
-      console.log('[TaskCard] Starting file upload:', file.name);
-      
-      const result = await uploadFileToCloudinary(
-        file,
-        task.id,
-        task.meetingId,
-        (progress) => {
-          setUploadProgress(progress);
-        }
-      );
-
-      if (!result.success) {
-        throw new Error(result.error || 'Upload failed');
-      }
-
-      console.log('[TaskCard] Upload successful:', result.fileUrl);
-      
-      setUploadedFile({
-        url: result.fileUrl!,
-        name: result.fileName!,
-        size: result.fileSize!,
-        type: result.fileType!,
-        publicId: result.publicId,
-      });
-      
-    } catch (err: any) {
-      console.error('[TaskCard] Upload error:', err);
-      setSubmitError(err.message || 'Failed to upload file. Please try again.');
-    } finally {
-      setUploading(false);
-      setUploadProgress(null);
-    }
-  }, [task.id, task.meetingId]);
 
   // Handle submission
   const handleSubmit = useCallback(() => {
@@ -208,24 +146,27 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     }
 
     // Check if file is required
-    if (task.requiresFile && !uploadedFile) {
-      setSubmitError('This task requires a file upload');
+    if (task.requiresFile && !driveLink.trim()) {
+      setSubmitError('This task requires a file link. Please provide your Google Drive link.');
       return;
     }
 
-    onSubmit(task.id, submissionText.trim(), uploadedFile || undefined);
+    // Build file info from drive link if provided
+    const fileInfo = driveLink.trim() ? {
+      url: driveLink.trim(),
+      name: 'Google Drive File',
+      size: 0,
+      type: 'link/drive',
+    } : undefined;
+
+    onSubmit(task.id, submissionText.trim(), fileInfo);
 
     // Reset form
     setSubmissionText('');
-    setUploadedFile(null);
+    setDriveLink('');
     setShowSubmitForm(false);
     setSubmitError('');
-  }, [task.id, task.requiresFile, submissionText, uploadedFile, onSubmit]);
-
-  // Remove uploaded file
-  const removeUploadedFile = useCallback(() => {
-    setUploadedFile(null);
-  }, []);
+  }, [task.id, task.requiresFile, submissionText, driveLink, onSubmit]);
 
   return (
     <div className={`bg-white rounded-2xl border shadow-sm transition-all ${
@@ -374,79 +315,40 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               />
             </div>
 
-            {/* File upload section */}
+            {/* File/Link section */}
             <div className="mb-4">
               <label className="block text-xs font-medium text-slate-600 mb-1">
-                File Attachment {task.requiresFile ? <span className="text-red-500">*</span> : '(optional)'}
+                Google Drive Link {task.requiresFile ? <span className="text-red-500">*</span> : '(optional)'}
               </label>
               
-              {!uploadedFile ? (
-                <div>
-                  <label className={`flex items-center gap-2 px-3 py-3 border-2 border-dashed rounded-lg cursor-pointer transition ${
-                    uploading 
-                      ? 'border-indigo-300 bg-indigo-50' 
-                      : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50'
-                  }`}>
-                    {uploading ? (
-                      <>
-                        <span className="animate-spin material-icons text-indigo-500">hourglass_empty</span>
-                        <div className="flex-1">
-                          <span className="text-sm text-indigo-600">
-                            Uploading... {uploadProgress ? `${uploadProgress.percentage}%` : ''}
-                          </span>
-                          {uploadProgress && (
-                            <div className="mt-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-indigo-500 transition-all duration-300"
-                                style={{ width: `${uploadProgress.percentage}%` }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <span className="material-icons text-slate-400">upload_file</span>
-                        <span className="text-sm text-slate-600">
-                          Click to attach file
-                        </span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      onChange={handleFileSelect}
-                      disabled={uploading}
-                      className="hidden"
-                      accept=".pdf,.docx,.xlsx,.zip,.txt"
-                    />
-                  </label>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Allowed: {ALLOWED_FILE_EXTENSIONS.map(e => e.toUpperCase()).join(', ')} • Max {formatFileSize(MAX_FILE_SIZE)}
-                  </p>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3 px-3 py-3 bg-green-50 border border-green-200 rounded-lg">
-                  <span className="material-icons text-green-600">{getFileIcon(uploadedFile.name)}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-green-700 truncate">{uploadedFile.name}</p>
-                    <p className="text-xs text-green-600">{formatFileSize(uploadedFile.size)}</p>
-                  </div>
-                  <button
-                    onClick={removeUploadedFile}
-                    className="p-1 text-green-600 hover:text-green-800 hover:bg-green-100 rounded transition"
-                    title="Remove file"
+              <div className="space-y-2">
+                <input
+                  type="url"
+                  value={driveLink}
+                  onChange={(e) => setDriveLink(e.target.value)}
+                  placeholder="Paste your Google Drive file link here..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+                <div className="flex items-center gap-2">
+                  <a
+                    href="https://drive.google.com/drive/folders/13lIjU4zmd8rolBJd036UIiwUEDN253TY"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1"
                   >
-                    <span className="material-icons text-sm">close</span>
-                  </button>
+                    <span className="material-icons text-sm">open_in_new</span>
+                    Upload to Google Drive
+                  </a>
+                  <span className="text-xs text-slate-400">• Then paste the share link above</span>
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Submit button */}
             <div className="flex gap-2">
               <button
                 onClick={handleSubmit}
-                disabled={updating || uploading || !submissionText.trim() || (task.requiresFile && !uploadedFile)}
+                disabled={updating || !submissionText.trim() || (task.requiresFile && !driveLink.trim())}
                 className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition flex items-center justify-center gap-2"
               >
                 {updating ? (
@@ -465,7 +367,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 onClick={() => {
                   setShowSubmitForm(false);
                   setSubmissionText('');
-                  setUploadedFile(null);
+                  setDriveLink('');
                   setSubmitError('');
                 }}
                 className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition"
@@ -623,7 +525,7 @@ const TasksPage: React.FC = () => {
   }, []);
 
   // Handle submission
-  const handleSubmit = useCallback(async (taskId: string, text: string, file?: UploadedFileInfo) => {
+  const handleSubmit = useCallback(async (taskId: string, text: string, file?: FileInfo) => {
     setUpdating(true);
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -642,7 +544,6 @@ const TasksPage: React.FC = () => {
           submissionFileName: file?.name,
           submissionFileSize: file?.size,
           submissionFileType: file?.type,
-          cloudinaryPublicId: file?.publicId,
         }),
       });
 
