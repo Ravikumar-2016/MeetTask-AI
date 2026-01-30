@@ -6,16 +6,14 @@ MeetTask AI streamlines the meeting-to-task workflow for teams. Managers upload 
 
 ---
 
-## 🎓 College Project Disclaimer
+## Project Disclaimer
 
-This is a **college/university demonstration project** built to showcase:
+This is a **demonstration project** built to showcase:
 - Full-stack React + TypeScript development
 - Firebase authentication and real-time database
 - Third-party API integration (AssemblyAI)
 - Modern UI/UX with Tailwind CSS
 - Serverless deployment on Vercel
-
-**Not intended for production use.** Some features are simplified for demonstration purposes.
 
 ---
 
@@ -227,17 +225,6 @@ vercel --prod
 
 Configure AssemblyAI webhook URL in your app:
 `https://your-app.vercel.app/api/webhook/assemblyai`
-
----
-
-## ⚠️ Known Limitations
-
-1. **No file storage** - Files are hosted on employee's Google Drive
-2. **No file preview** - Manager must open Drive link to view
-3. **Simple permissions** - Only "Viewer" sharing level supported
-4. **No email notifications** - Status updates via dashboard only
-5. **No edit/resubmit** - Submissions are final
-6. **Max 9 API routes** - Within Vercel free tier limits
 
 ---
 
