@@ -505,46 +505,61 @@ const MeetingDetailsPage: React.FC = () => {
                 </div>
               ) : (
                 tasks.map((task) => (
-                  <div key={task.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition">
+                  <div key={task.id} className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-300">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                          task.status === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-xl border-2 flex items-center justify-center shrink-0 transition-all ${
+                          task.status === 'completed' 
+                            ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-200' 
+                            : 'border-slate-200 bg-slate-50'
                         }`}>
-                          {task.status === 'completed' && <span className="material-icons text-sm">check</span>}
+                          {task.status === 'completed' && <span className="material-icons text-lg">check</span>}
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-semibold">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-mono bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-lg font-bold">
                               {task.taskId}
                             </span>
-                            <span className="text-sm font-medium text-slate-700">
+                            <span className="text-sm font-semibold text-slate-700">
                               Assigned to: {task.assignedToName || task.assignedTo}
                             </span>
                           </div>
+                          {task.title && (
+                            <p className="text-sm text-slate-500 mt-1">{task.title}</p>
+                          )}
                         </div>
                       </div>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${statusColors[task.status]}`}>
+                      <span className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
+                        task.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
+                        task.status === 'in_progress' ? 'bg-blue-50 text-blue-700' :
+                        task.status === 'pending' ? 'bg-amber-50 text-amber-700' :
+                        'bg-red-50 text-red-700'
+                      }`}>
                         {statusLabels[task.status]}
                       </span>
                     </div>
 
                     {/* Show submission if exists */}
                     {task.submissionText && (
-                      <div className="mt-3 p-3 bg-green-50 border border-green-100 rounded-lg">
-                        <p className="text-xs font-semibold text-green-700 mb-1">
-                          <span className="material-icons text-xs mr-1 align-middle">check_circle</span>
-                          Submitted
-                        </p>
+                      <div className="mt-4 p-4 bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-200/60 rounded-xl">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center">
+                            <span className="material-icons text-emerald-600 text-sm">check_circle</span>
+                          </div>
+                          <span className="text-xs font-bold text-emerald-700">Submitted</span>
+                        </div>
+                        {task.submissionText && (
+                          <p className="text-sm text-slate-600 mb-3">{task.submissionText}</p>
+                        )}
                         {task.submissionFileUrl && (
                           <a
                             href={task.submissionFileUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-sm text-green-700 hover:text-green-800 underline"
+                            className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 rounded-lg text-sm font-medium transition-all shadow-sm"
                           >
-                            <span className="material-icons text-sm">attach_file</span>
-                            {task.submissionFileName || 'View file'}
+                            <span className="material-icons text-[16px]">attach_file</span>
+                            {task.submissionFileName || 'Google Drive File'}
                           </a>
                         )}
                       </div>
@@ -554,49 +569,51 @@ const MeetingDetailsPage: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="bg-white p-8 rounded-2xl border border-slate-200/80 shadow-sm">
               {transcript ? (
                 <div>
                   {/* Toggle for speaker view */}
                   {utterances.length > 0 && (
-                    <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
-                      <div className="flex items-center text-sm text-slate-500">
-                        <span className="material-icons text-[16px] mr-2">people</span>
-                        {Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified
+                    <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+                      <div className="flex items-center text-sm text-slate-500 bg-slate-50 px-3 py-2 rounded-xl">
+                        <span className="material-icons text-slate-400 text-lg mr-2">people</span>
+                        <span className="font-medium">{Object.keys(speakerMapping).length} speaker{Object.keys(speakerMapping).length !== 1 ? 's' : ''} identified</span>
                       </div>
                       <button
                         onClick={() => setShowSpeakerView(!showSpeakerView)}
-                        className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
-                          showSpeakerView ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'
+                        className={`px-4 py-2 text-sm font-bold rounded-xl transition-all ${
+                          showSpeakerView 
+                            ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-200' 
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
-                        {showSpeakerView ? 'Speaker View' : 'Plain Text'}
+                        {showSpeakerView ? '✦ Speaker View' : 'Plain Text'}
                       </button>
                     </div>
                   )}
                   
                   {/* Transcript content */}
                   {showSpeakerView && utterances.length > 0 ? (
-                    <div className="space-y-4 max-h-[600px] overflow-y-auto">
+                    <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                       {utterances.map((utterance, idx) => {
                         const speakerMtaiId = speakerMapping[utterance.speaker];
                         const speakerUser = usersList.find(u => u.mtaiId === speakerMtaiId);
                         const speakerName = speakerUser?.name || speakerUser?.displayName || speakerMtaiId || `Speaker ${utterance.speaker}`;
                         
                         const speakerColors: { [key: string]: string } = {
-                          'A': 'bg-blue-50 border-blue-200 text-blue-700',
-                          'B': 'bg-emerald-50 border-emerald-200 text-emerald-700',
-                          'C': 'bg-purple-50 border-purple-200 text-purple-700',
-                          'D': 'bg-amber-50 border-amber-200 text-amber-700',
-                          'E': 'bg-rose-50 border-rose-200 text-rose-700',
+                          'A': 'bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200/60 text-blue-800',
+                          'B': 'bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200/60 text-emerald-800',
+                          'C': 'bg-gradient-to-br from-purple-50 to-purple-100/50 border-purple-200/60 text-purple-800',
+                          'D': 'bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200/60 text-amber-800',
+                          'E': 'bg-gradient-to-br from-rose-50 to-rose-100/50 border-rose-200/60 text-rose-800',
                         };
-                        const colorClass = speakerColors[utterance.speaker] || 'bg-slate-50 border-slate-200 text-slate-700';
+                        const colorClass = speakerColors[utterance.speaker] || 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-200/60 text-slate-800';
                         
                         return (
-                          <div key={idx} className={`p-4 rounded-lg border ${colorClass}`}>
+                          <div key={idx} className={`p-4 rounded-2xl border ${colorClass}`}>
                             <div className="flex items-center justify-between mb-2">
                               <span className="font-bold text-sm">{speakerName}</span>
-                              <span className="text-xs opacity-60">
+                              <span className="text-xs opacity-50 bg-white/50 px-2 py-1 rounded-lg">
                                 {Math.floor(utterance.start / 60000)}:{String(Math.floor((utterance.start % 60000) / 1000)).padStart(2, '0')}
                               </span>
                             </div>
@@ -606,12 +623,14 @@ const MeetingDetailsPage: React.FC = () => {
                       })}
                     </div>
                   ) : (
-                    <p className="leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[600px] overflow-y-auto">{transcript}</p>
+                    <p className="leading-relaxed text-slate-700 whitespace-pre-wrap max-h-[600px] overflow-y-auto bg-slate-50 p-5 rounded-xl">{transcript}</p>
                   )}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <span className="material-icons text-slate-300 text-5xl mb-4">description</span>
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <span className="material-icons text-slate-300 text-3xl">description</span>
+                  </div>
                   <h3 className="font-bold text-slate-900 mb-2">No transcript yet</h3>
                   <p className="text-slate-500">
                     {meeting.status === 'completed' 
@@ -627,27 +646,49 @@ const MeetingDetailsPage: React.FC = () => {
         {/* Sidebar */}
         <div className="space-y-6">
           {/* Status Badge */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-lg">Status</h3>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${getStatusBadgeClass(meeting.status)}`}>
+              <h3 className="font-bold text-lg text-slate-800">Status</h3>
+              <span className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase ${getStatusBadgeClass(meeting.status)}`}>
                 {getStatusLabel(meeting.status)}
               </span>
             </div>
             {meeting.status === 'error' && meeting.errorMessage && (
-              <p className="text-rose-600 text-sm">{meeting.errorMessage}</p>
+              <div className="p-3 bg-red-50 border border-red-100 rounded-xl">
+                <p className="text-rose-600 text-sm">{meeting.errorMessage}</p>
+              </div>
             )}
             {meeting.status === 'processing' && (
-              <p className="text-blue-600 text-sm">Your meeting is being processed...</p>
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
+                <p className="text-blue-600 text-sm flex items-center gap-2">
+                  <span className="material-icons text-sm animate-spin">sync</span>
+                  Your meeting is being processed...
+                </p>
+              </div>
             )}
             {meeting.status === 'transcribing' && (
-              <p className="text-blue-600 text-sm">Audio is being transcribed...</p>
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
+                <p className="text-blue-600 text-sm flex items-center gap-2">
+                  <span className="material-icons text-sm animate-pulse">mic</span>
+                  Audio is being transcribed...
+                </p>
+              </div>
             )}
             {meeting.status === 'needs_mapping' && (
-              <p className="text-amber-600 text-sm">Please map speakers to employees below.</p>
+              <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                <p className="text-amber-600 text-sm flex items-center gap-2">
+                  <span className="material-icons text-sm">people</span>
+                  Please map speakers to employees below.
+                </p>
+              </div>
             )}
             {meeting.status === 'completed' && (
-              <p className="text-green-600 text-sm">Meeting processed. Ready for task assignment.</p>
+              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                <p className="text-emerald-600 text-sm flex items-center gap-2">
+                  <span className="material-icons text-sm">check_circle</span>
+                  Meeting processed. Ready for task assignment.
+                </p>
+              </div>
             )}
           </div>
 
@@ -753,25 +794,40 @@ const MeetingDetailsPage: React.FC = () => {
           {/* Meeting Info - shown for completed meetings */}
           {meeting.status === 'completed' && (
             <>
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <h3 className="font-bold text-lg mb-4">Meeting Info</h3>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Date</span>
-                    <span className="font-bold">{meeting.date}</span>
+              <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+                <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                  <span className="material-icons text-slate-400">info</span>
+                  Meeting Info
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center text-sm py-2.5 px-3 bg-slate-50 rounded-xl">
+                    <span className="text-slate-500 flex items-center gap-2">
+                      <span className="material-icons text-slate-400 text-lg">calendar_today</span>
+                      Date
+                    </span>
+                    <span className="font-bold text-slate-700">{meeting.date}</span>
                   </div>
-                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Tasks</span>
-                    <span className="font-bold">{tasks.length}</span>
+                  <div className="flex justify-between items-center text-sm py-2.5 px-3 bg-indigo-50 rounded-xl">
+                    <span className="text-slate-500 flex items-center gap-2">
+                      <span className="material-icons text-indigo-400 text-lg">assignment</span>
+                      Tasks
+                    </span>
+                    <span className="font-bold text-indigo-700">{tasks.length}</span>
                   </div>
-                  <div className="flex justify-between text-sm py-2 border-b border-slate-100">
-                    <span className="text-slate-500">Participants</span>
-                    <span className="font-bold">{Object.keys(speakerMapping).length}</span>
+                  <div className="flex justify-between items-center text-sm py-2.5 px-3 bg-blue-50 rounded-xl">
+                    <span className="text-slate-500 flex items-center gap-2">
+                      <span className="material-icons text-blue-400 text-lg">people</span>
+                      Participants
+                    </span>
+                    <span className="font-bold text-blue-700">{Object.keys(speakerMapping).length}</span>
                   </div>
                   {meeting.duration && meeting.duration > 0 && (
-                    <div className="flex justify-between text-sm py-2">
-                      <span className="text-slate-500">Duration</span>
-                      <span className="font-bold">{Math.floor(meeting.duration / 60)}:{String(Math.floor(meeting.duration % 60)).padStart(2, '0')}</span>
+                    <div className="flex justify-between items-center text-sm py-2.5 px-3 bg-amber-50 rounded-xl">
+                      <span className="text-slate-500 flex items-center gap-2">
+                        <span className="material-icons text-amber-400 text-lg">schedule</span>
+                        Duration
+                      </span>
+                      <span className="font-bold text-amber-700">{Math.floor(meeting.duration / 60)}:{String(Math.floor(meeting.duration % 60)).padStart(2, '0')}</span>
                     </div>
                   )}
                 </div>
@@ -779,34 +835,37 @@ const MeetingDetailsPage: React.FC = () => {
 
               {/* Participants List */}
               {Object.keys(speakerMapping).length > 0 && (
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-lg mb-4">Participants</h3>
-                  <div className="space-y-2">
+                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+                  <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                    <span className="material-icons text-slate-400">group</span>
+                    Participants
+                  </h3>
+                  <div className="space-y-3">
                     {Object.entries(speakerMapping).map(([speakerId, mtaiId]) => {
                       const employee = usersList.find(u => u.mtaiId === mtaiId);
                       const speakerColorMap: { [key: string]: string } = {
-                        'A': 'bg-blue-100 text-blue-700',
-                        'B': 'bg-emerald-100 text-emerald-700',
-                        'C': 'bg-purple-100 text-purple-700',
-                        'D': 'bg-amber-100 text-amber-700',
-                        'E': 'bg-rose-100 text-rose-700',
+                        'A': 'bg-gradient-to-br from-blue-100 to-blue-200 text-blue-700',
+                        'B': 'bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-700',
+                        'C': 'bg-gradient-to-br from-purple-100 to-purple-200 text-purple-700',
+                        'D': 'bg-gradient-to-br from-amber-100 to-amber-200 text-amber-700',
+                        'E': 'bg-gradient-to-br from-rose-100 to-rose-200 text-rose-700',
                       };
-                      const colorClass = speakerColorMap[speakerId] || 'bg-slate-100 text-slate-700';
+                      const colorClass = speakerColorMap[speakerId] || 'bg-gradient-to-br from-slate-100 to-slate-200 text-slate-700';
                       const taskCount = tasks.filter(t => t.assignedTo === mtaiId).length;
                       
                       return (
-                        <div key={speakerId} className="flex items-center justify-between py-2">
-                          <div className="flex items-center">
-                            <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold mr-3 ${colorClass}`}>
+                        <div key={speakerId} className="flex items-center justify-between p-3 bg-slate-50/50 rounded-xl hover:bg-slate-100/50 transition">
+                          <div className="flex items-center gap-3">
+                            <span className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shadow-sm ${colorClass}`}>
                               {speakerId}
                             </span>
                             <div>
-                              <span className="font-medium text-slate-700">{employee?.name || employee?.displayName || mtaiId}</span>
-                              <span className="text-xs text-slate-400 ml-2">{mtaiId}</span>
+                              <span className="font-semibold text-slate-700 block">{employee?.name || employee?.displayName || mtaiId}</span>
+                              <span className="text-xs text-slate-400">{mtaiId}</span>
                             </div>
                           </div>
                           {taskCount > 0 && (
-                            <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full">
+                            <span className="text-xs bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-lg font-semibold">
                               {taskCount} task{taskCount !== 1 ? 's' : ''}
                             </span>
                           )}

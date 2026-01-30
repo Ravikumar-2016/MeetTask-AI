@@ -368,9 +368,9 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
       <SuccessOverlay show={showSuccess} onComplete={handleSuccessComplete} taskTitle={task.title} />
       <ProgressOverlay show={currentStep !== 'idle' && currentStep !== 'complete' && currentStep !== 'error'} currentStep={currentStep} />
       
-      <div className={`bg-white rounded-2xl border shadow-sm transition-all duration-300 ${
-        isOverdue ? 'border-rose-200' : hasSubmission ? 'border-green-200' : 'border-slate-200'
-      } ${expanded ? 'ring-2 ring-indigo-100' : ''} hover:shadow-md`}>
+      <div className={`bg-white rounded-2xl border transition-all duration-300 ${
+        isOverdue ? 'border-rose-200 shadow-rose-100/50' : hasSubmission ? 'border-emerald-200 shadow-emerald-100/50' : 'border-slate-200/80'
+      } ${expanded ? 'ring-2 ring-indigo-100 shadow-lg' : 'shadow-sm hover:shadow-md'}`}>
         <div className="p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-4 flex-1 min-w-0">
@@ -379,8 +379,13 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 value={task.status}
                 onChange={(e) => onStatusChange(task.id, e.target.value as TaskStatus)}
                 disabled={updating || task.status === 'completed'}
-                className={`appearance-none w-32 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all ${statusColors[task.status]} ${
-                  updating ? 'opacity-50 cursor-wait' : 'hover:opacity-80'
+                className={`appearance-none px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-sm ${
+                  task.status === 'pending' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                  task.status === 'in_progress' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                  task.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                  'bg-red-50 text-red-700 border border-red-200'
+                } ${
+                  updating ? 'opacity-50 cursor-wait' : 'hover:shadow-md'
                 }`}
               >
                 <option value="pending">Pending</option>
@@ -391,36 +396,44 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 
               {/* Task content */}
               <div className="flex-1 min-w-0">
-                <h3 className={`font-semibold text-slate-900 ${task.status === 'completed' ? 'line-through text-slate-400' : ''}`}>
+                <h3 className={`font-semibold text-slate-800 text-[15px] leading-snug ${task.status === 'completed' ? 'line-through text-slate-400' : ''}`}>
                   {task.title}
                 </h3>
                 
                 {task.description && (
-                  <p className="text-sm text-slate-500 mt-1 line-clamp-2">{task.description}</p>
+                  <p className="text-sm text-slate-500 mt-1.5 line-clamp-2 leading-relaxed">{task.description}</p>
                 )}
 
-                <div className="flex flex-wrap items-center gap-3 mt-3">
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${priorityColors[task.priority]}`}>
+                <div className="flex flex-wrap items-center gap-2.5 mt-3">
+                  <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg ${
+                    task.priority === 'critical' ? 'bg-red-100 text-red-700' :
+                    task.priority === 'high' ? 'bg-orange-100 text-orange-700' :
+                    task.priority === 'medium' ? 'bg-blue-100 text-blue-700' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
                     {task.priority}
                   </span>
 
                   {task.dueDate && (
-                    <span className={`text-xs flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
-                      <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'event'}</span>
+                    <span className={`text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                      isOverdue ? 'bg-rose-50 text-rose-600 font-medium' : 'bg-slate-50 text-slate-600'
+                    }`}>
+                      <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'calendar_today'}</span>
                       {formatDate(task.dueDate)}
                     </span>
                   )}
 
                   {task.requiresFile && (
-                    <span className="text-xs flex items-center gap-1 text-orange-600">
+                    <span className="text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-50 text-orange-600">
                       <span className="material-icons text-[14px]">attach_file</span>
                       File required
                     </span>
                   )}
 
                   {task.creatorName && (
-                    <span className="text-xs text-slate-400">
-                      From: {task.creatorName}
+                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                      <span className="material-icons text-[12px]">person</span>
+                      {task.creatorName}
                     </span>
                   )}
                 </div>
@@ -432,10 +445,10 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               {!hasSubmission && task.status !== 'completed' && (
                 <button
                   onClick={() => setShowSubmitForm(!showSubmitForm)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all shadow-sm ${
                     showSubmitForm 
-                      ? 'bg-indigo-600 text-white' 
-                      : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                      ? 'bg-indigo-600 text-white shadow-indigo-200' 
+                      : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:shadow-md'
                   }`}
                 >
                   Submit Work
@@ -443,9 +456,9 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               )}
               <button
                 onClick={() => setExpanded(!expanded)}
-                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition"
+                className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
               >
-                <span className="material-icons text-[20px] transition-transform duration-200" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                <span className="material-icons text-[20px] transition-transform duration-300" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                   expand_more
                 </span>
               </button>
@@ -454,63 +467,68 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 
           {/* Existing submission display - Locked state */}
           {hasSubmission && (
-            <div className="mt-4 p-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl animate-fadeIn shadow-sm">
+            <div className="mt-5 mx-5 mb-5 p-5 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 border border-emerald-200/60 rounded-2xl shadow-sm">
               {/* Header with status badge */}
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                    <span className="material-icons text-green-600 text-lg">task_alt</span>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center shadow-sm">
+                    <span className="material-icons text-emerald-600">task_alt</span>
                   </div>
                   <div>
-                    <span className="text-sm font-semibold text-green-800">Submitted Successfully</span>
-                    <div className="flex items-center gap-1 text-xs text-green-600">
-                      <span className="material-icons text-[10px]">lock</span>
+                    <span className="text-sm font-bold text-emerald-800">Submitted Successfully</span>
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 mt-0.5">
+                      <span className="material-icons text-[11px]">lock</span>
                       Submission locked
                     </div>
                   </div>
                 </div>
                 {task.submittedAt && (
                   <div className="text-right">
-                    <span className="px-2.5 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
-                      ✓ Submitted
+                    <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-lg shadow-sm">
+                      <span className="material-icons text-[12px]">check_circle</span>
+                      Submitted
                     </span>
-                    <p className="text-xs text-green-600 mt-1">{formatDate(task.submittedAt)}</p>
+                    <p className="text-xs text-emerald-600 mt-1.5">{formatDate(task.submittedAt)}</p>
                   </div>
                 )}
               </div>
 
               {/* Submitted text - read only */}
               {task.submissionText && (
-                <div className="p-3 bg-white/60 border border-green-100 rounded-lg mb-3">
-                  <p className="text-xs text-green-600 font-medium mb-1">Your Response:</p>
-                  <p className="text-sm text-green-900">{task.submissionText}</p>
+                <div className="p-4 bg-white/70 backdrop-blur-sm border border-emerald-100 rounded-xl mb-4">
+                  <p className="text-xs text-emerald-600 font-semibold mb-2 flex items-center gap-1.5">
+                    <span className="material-icons text-[12px]">description</span>
+                    Your Response
+                  </p>
+                  <p className="text-sm text-slate-700 leading-relaxed">{task.submissionText}</p>
                 </div>
               )}
 
               {/* Attached file - with preview option */}
               {task.submissionFileUrl && (
-                <div className="p-3 bg-white border border-green-200 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                      <span className="material-icons text-green-600">{getDriveFileIcon(task.submissionFileUrl)}</span>
+                <div className="p-4 bg-white border border-emerald-200/60 rounded-xl shadow-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-gradient-to-br from-emerald-100 to-green-100 rounded-xl flex items-center justify-center shadow-sm">
+                      <span className="material-icons text-emerald-600 text-xl">{getDriveFileIcon(task.submissionFileUrl)}</span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-green-800 truncate">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
                         {task.submissionFileName || getDriveFileType(task.submissionFileUrl)}
                       </p>
-                      <p className="text-xs text-green-600">Shared as Viewer</p>
+                      <p className="text-xs text-emerald-600 mt-0.5 flex items-center gap-1">
+                        <span className="material-icons text-[11px]">visibility</span>
+                        Shared as Viewer
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={task.submissionFileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition"
-                      >
-                        <span className="material-icons text-sm">open_in_new</span>
-                        View File
-                      </a>
-                    </div>
+                    <a
+                      href={task.submissionFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl transition-all shadow-sm hover:shadow-md"
+                    >
+                      <span className="material-icons text-[16px]">open_in_new</span>
+                      View File
+                    </a>
                   </div>
                 </div>
               )}
@@ -525,27 +543,32 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 
           {/* Submit form - Guided flow */}
           {showSubmitForm && !hasSubmission && (
-            <div className="mt-4 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 animate-slideDown">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
-                  <span className="material-icons text-indigo-600 text-lg">assignment_turned_in</span>
+            <div className="mt-5 mx-5 mb-5 p-6 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 rounded-2xl border border-slate-200/80 shadow-sm animate-slideDown">
+              <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-100">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
+                  <span className="material-icons text-white">assignment_turned_in</span>
                 </div>
-                <h4 className="text-base font-semibold text-slate-800">Submit Your Work</h4>
+                <div>
+                  <h4 className="text-base font-bold text-slate-800">Submit Your Work</h4>
+                  <p className="text-xs text-slate-500">Complete the fields below and submit</p>
+                </div>
               </div>
               
               {/* Error message */}
               {submitError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2 animate-shake">
-                  <span className="material-icons text-red-500 text-sm mt-0.5">error</span>
-                  <p className="text-sm text-red-700">{submitError}</p>
+                <div className="mb-5 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-shake">
+                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center shrink-0">
+                    <span className="material-icons text-red-500 text-sm">error</span>
+                  </div>
+                  <p className="text-sm text-red-700 pt-1">{submitError}</p>
                 </div>
               )}
 
               {/* Step 1: Text response */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-5 h-5 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">1</div>
-                  <label className="text-sm font-medium text-slate-700">
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 bg-indigo-600 text-white text-xs font-bold rounded-lg flex items-center justify-center shadow-sm">1</div>
+                  <label className="text-sm font-semibold text-slate-700">
                     Describe your work <span className="text-red-500">*</span>
                   </label>
                 </div>
@@ -553,29 +576,29 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                   value={submissionText}
                   onChange={(e) => setSubmissionText(e.target.value)}
                   placeholder="Explain what you've done, share relevant details, or describe your solution..."
-                  rows={3}
+                  rows={4}
                   disabled={currentStep !== 'idle' && currentStep !== 'error'}
-                  className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-3.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-white shadow-sm"
                 />
               </div>
 
               {/* Step 2: Google Drive link - Clean UI */}
-              <div className="mb-5">
-                <div className="flex items-center justify-between mb-2">
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className={`w-5 h-5 text-xs font-bold rounded-full flex items-center justify-center ${
-                      task.requiresFile ? 'bg-indigo-600 text-white' : 'bg-slate-300 text-slate-600'
+                    <div className={`w-6 h-6 text-xs font-bold rounded-lg flex items-center justify-center shadow-sm ${
+                      task.requiresFile ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
                     }`}>2</div>
-                    <label className="text-sm font-medium text-slate-700">
-                      Attach file (Google Drive) {task.requiresFile ? <span className="text-red-500">*</span> : <span className="text-slate-400">(optional)</span>}
+                    <label className="text-sm font-semibold text-slate-700">
+                      Attach file (Google Drive) {task.requiresFile ? <span className="text-red-500">*</span> : <span className="text-slate-400 font-normal">(optional)</span>}
                     </label>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowHelpModal(true)}
-                    className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 transition"
+                    className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 font-medium transition"
                   >
-                    <span className="material-icons text-sm">help_outline</span>
+                    <span className="material-icons text-[14px]">help_outline</span>
                     How to share
                   </button>
                 </div>
@@ -584,7 +607,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                   <div className="space-y-3">
                     {/* Single clean input */}
                     <div className="relative">
-                      <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">link</span>
+                      <span className="material-icons absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">link</span>
                       <input
                         ref={linkInputRef}
                         type="url"
@@ -592,7 +615,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                         onChange={(e) => setDriveLink(e.target.value)}
                         placeholder="Paste Google Drive file link here"
                         disabled={currentStep !== 'idle' && currentStep !== 'error'}
-                        className="w-full pl-10 pr-10 py-3 border border-slate-200 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full pl-12 pr-4 py-3.5 border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-white shadow-sm"
                       />
                     </div>
 
@@ -991,17 +1014,38 @@ const TasksPage: React.FC = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <p className="text-2xl font-bold text-amber-600">{stats.pending}</p>
-          <p className="text-sm text-slate-500">Pending</p>
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-2xl border border-amber-100 hover:shadow-lg hover:shadow-amber-100/50 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-3xl font-bold text-amber-600">{stats.pending}</p>
+              <p className="text-sm font-medium text-amber-700/70 mt-1">Pending</p>
+            </div>
+            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+              <span className="material-icons text-amber-600">pending_actions</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <p className="text-2xl font-bold text-blue-600">{stats.inProgress}</p>
-          <p className="text-sm text-slate-500">In Progress</p>
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-2xl border border-blue-100 hover:shadow-lg hover:shadow-blue-100/50 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-3xl font-bold text-blue-600">{stats.inProgress}</p>
+              <p className="text-sm font-medium text-blue-700/70 mt-1">In Progress</p>
+            </div>
+            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+              <span className="material-icons text-blue-600">autorenew</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
-          <p className="text-sm text-slate-500">Completed</p>
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-5 rounded-2xl border border-emerald-100 hover:shadow-lg hover:shadow-emerald-100/50 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-3xl font-bold text-emerald-600">{stats.completed}</p>
+              <p className="text-sm font-medium text-emerald-700/70 mt-1">Completed</p>
+            </div>
+            <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <span className="material-icons text-emerald-600">task_alt</span>
+            </div>
+          </div>
         </div>
       </div>
 

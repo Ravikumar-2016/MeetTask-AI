@@ -452,30 +452,62 @@ const TaskManagerPage: React.FC = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-2xl font-bold text-slate-900">{tasks.length}</p>
-          <p className="text-sm text-slate-500">Total Tasks</p>
+        <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-slate-800">{tasks.length}</p>
+              <p className="text-sm text-slate-500 font-medium">Total Tasks</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-slate-200/60 flex items-center justify-center">
+              <span className="material-icons text-slate-600">list_alt</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-2xl font-bold text-amber-600">{tasks.filter(t => t.status === 'pending').length}</p>
-          <p className="text-sm text-slate-500">Pending</p>
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-4 rounded-2xl border border-amber-100 shadow-sm shadow-amber-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-amber-700">{tasks.filter(t => t.status === 'pending').length}</p>
+              <p className="text-sm text-amber-600/80 font-medium">Pending</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+              <span className="material-icons text-amber-600">pending_actions</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-2xl font-bold text-blue-600">{tasks.filter(t => t.status === 'in_progress').length}</p>
-          <p className="text-sm text-slate-500">In Progress</p>
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-100 shadow-sm shadow-blue-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-blue-700">{tasks.filter(t => t.status === 'in_progress').length}</p>
+              <p className="text-sm text-blue-600/80 font-medium">In Progress</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+              <span className="material-icons text-blue-600">autorenew</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-          <p className="text-2xl font-bold text-green-600">{tasks.filter(t => t.status === 'completed').length}</p>
-          <p className="text-sm text-slate-500">Completed</p>
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-4 rounded-2xl border border-emerald-100 shadow-sm shadow-emerald-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold text-emerald-700">{tasks.filter(t => t.status === 'completed').length}</p>
+              <p className="text-sm text-emerald-600/80 font-medium">Completed</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+              <span className="material-icons text-emerald-600">task_alt</span>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <span className="material-icons text-slate-400 text-lg">filter_list</span>
+          <span className="font-medium">Filters:</span>
+        </div>
         <select
           value={filterMeeting}
           onChange={(e) => setFilterMeeting(e.target.value)}
-          className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+          className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
         >
           <option value="all">All Meetings</option>
           {meetings.map((m) => (
@@ -485,7 +517,7 @@ const TaskManagerPage: React.FC = () => {
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+          className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
         >
           <option value="all">All Statuses</option>
           <option value="pending">Pending</option>
@@ -690,108 +722,123 @@ const TaskManagerPage: React.FC = () => {
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {filteredTasks.map((task, index) => (
             <div
               key={task.id}
-              className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-all duration-300 animate-fadeIn"
+              className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm hover:shadow-lg hover:border-slate-300/80 transition-all duration-300 animate-fadeIn"
               style={{ animationDelay: `${index * 50}ms` }}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{task.taskId}</span>
-                    <h3 className="font-semibold text-slate-900 truncate">{task.title}</h3>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium border ${priorityColors[task.priority]}`}>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg">{task.taskId}</span>
+                    <h3 className="font-bold text-slate-800 text-lg">{task.title}</h3>
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize ${priorityColors[task.priority]}`}>
                       {task.priority}
                     </span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[task.status]}`}>
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${statusColors[task.status]}`}>
                       {statusLabels[task.status]}
                     </span>
                     {task.submissionText && isRecentSubmission(task.submittedAt) && (
-                      <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full animate-pulse">
+                      <span className="px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold rounded-full animate-pulse shadow-sm">
                         NEW SUBMISSION
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-slate-500 mb-2">
-                    {task.meetingTitle} • Assigned to: <span className="font-medium">{task.assignedToName}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 mb-3">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="material-icons text-slate-400 text-sm">videocam</span>
+                      {task.meetingTitle}
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="material-icons text-slate-400 text-sm">person</span>
+                      <span className="font-medium text-slate-600">{task.assignedToName}</span>
+                    </span>
                     {task.requiresFile && (
-                      <span className="inline-flex items-center ml-2 text-amber-600">
-                        <span className="material-icons text-[12px] mr-0.5">attach_file</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md text-xs font-medium">
+                        <span className="material-icons text-[12px]">attach_file</span>
                         File required
                       </span>
                     )}
-                  </p>
+                  </div>
                   {task.description && (
                     <p className="text-sm text-slate-600 line-clamp-2">{task.description}</p>
                   )}
                   
                   {/* Enhanced submission display */}
                   {task.submissionText && (
-                    <div className={`mt-3 p-4 rounded-xl border transition-all ${
+                    <div className={`mt-4 p-5 rounded-2xl border-2 transition-all ${
                       isRecentSubmission(task.submittedAt) 
-                        ? 'bg-green-50 border-green-200 ring-2 ring-green-100' 
-                        : 'bg-slate-50 border-slate-200'
+                        ? 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200 shadow-sm shadow-emerald-100' 
+                        : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-200'
                     }`}>
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
-                          <span className={`material-icons text-sm ${isRecentSubmission(task.submittedAt) ? 'text-green-600' : 'text-slate-500'}`}>
-                            assignment_turned_in
-                          </span>
-                          <span className={`text-xs font-semibold ${isRecentSubmission(task.submittedAt) ? 'text-green-700' : 'text-slate-600'}`}>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            isRecentSubmission(task.submittedAt) ? 'bg-emerald-100' : 'bg-slate-200'
+                          }`}>
+                            <span className={`material-icons text-lg ${isRecentSubmission(task.submittedAt) ? 'text-emerald-600' : 'text-slate-500'}`}>
+                              assignment_turned_in
+                            </span>
+                          </div>
+                          <span className={`text-sm font-bold ${isRecentSubmission(task.submittedAt) ? 'text-emerald-700' : 'text-slate-600'}`}>
                             Employee Submission
                           </span>
                         </div>
                         {task.submittedAt && (
-                          <span className="text-xs text-slate-400">
+                          <span className="text-xs text-slate-400 bg-white/60 px-2 py-1 rounded-md">
                             {formatDate(task.submittedAt)}
                           </span>
                         )}
                       </div>
-                      <p className={`text-sm ${isRecentSubmission(task.submittedAt) ? 'text-green-800' : 'text-slate-700'}`}>
+                      <p className={`text-sm leading-relaxed ${isRecentSubmission(task.submittedAt) ? 'text-emerald-800' : 'text-slate-700'}`}>
                         {task.submissionText}
                       </p>
                       
                       {/* Enhanced file attachment display */}
                       {task.submissionFileUrl && (
-                        <div className="mt-3 p-3 bg-white rounded-lg border border-slate-200">
+                        <div className="mt-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
                           <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                              isRecentSubmission(task.submittedAt) ? 'bg-green-100' : 'bg-blue-100'
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                              isRecentSubmission(task.submittedAt) ? 'bg-gradient-to-br from-emerald-100 to-green-100' : 'bg-gradient-to-br from-blue-100 to-indigo-100'
                             }`}>
-                              <span className={`material-icons ${
-                                isRecentSubmission(task.submittedAt) ? 'text-green-600' : 'text-blue-600'
+                              <span className={`material-icons text-xl ${
+                                isRecentSubmission(task.submittedAt) ? 'text-emerald-600' : 'text-blue-600'
                               }`}>
                                 {getDriveFileIcon(task.submissionFileUrl)}
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-800 truncate">
+                              <p className="text-sm font-semibold text-slate-800 truncate">
                                 {task.submissionFileName || getDriveFileType(task.submissionFileUrl)}
                               </p>
-                              <p className="text-xs text-slate-500">Google Drive</p>
+                              <p className="text-xs text-slate-500 flex items-center gap-1">
+                                <span className="material-icons text-[14px]">cloud</span>
+                                Google Drive
+                              </p>
                             </div>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-2">
                               <a
                                 href={task.submissionFileUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow-md transition-all"
                                 title="Open in Google Drive"
                               >
                                 <span className="material-icons text-sm">open_in_new</span>
-                                Open
+                                View File
                               </a>
                               <button
                                 onClick={() => {
                                   navigator.clipboard.writeText(task.submissionFileUrl!);
                                   success('Link copied to clipboard!');
                                 }}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition"
+                                className="inline-flex items-center justify-center w-10 h-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
                                 title="Copy link"
                               >
-                                <span className="material-icons text-sm">content_copy</span>
+                                <span className="material-icons text-lg">content_copy</span>
                               </button>
                             </div>
                           </div>
@@ -800,14 +847,16 @@ const TaskManagerPage: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs text-slate-400">Created</p>
-                  <p className="text-sm text-slate-600">{formatDate(task.createdAt)}</p>
+                <div className="text-right shrink-0 space-y-2">
+                  <div className="px-3 py-2 bg-slate-50 rounded-xl">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Created</p>
+                    <p className="text-sm text-slate-600 font-medium">{formatDate(task.createdAt)}</p>
+                  </div>
                   {task.dueDate && (
-                    <>
-                      <p className="text-xs text-slate-400 mt-2">Due</p>
-                      <p className="text-sm text-slate-600">{formatDate(task.dueDate)}</p>
-                    </>
+                    <div className="px-3 py-2 bg-amber-50 rounded-xl">
+                      <p className="text-[10px] text-amber-500 uppercase tracking-wider font-medium">Due Date</p>
+                      <p className="text-sm text-amber-700 font-medium">{formatDate(task.dueDate)}</p>
+                    </div>
                   )}
                 </div>
               </div>
