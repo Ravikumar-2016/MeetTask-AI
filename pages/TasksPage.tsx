@@ -23,11 +23,6 @@ import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 // ============================================
-// CONSTANTS
-// ============================================
-const GOOGLE_DRIVE_URL = 'https://drive.google.com';
-
-// ============================================
 // TYPES
 // ============================================
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
@@ -290,8 +285,8 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
   const [currentStep, setCurrentStep] = useState<SubmissionStep>('idle');
   const [showSuccess, setShowSuccess] = useState(false);
   const [linkValidated, setLinkValidated] = useState(false);
-  const [uploadStep, setUploadStep] = useState<1 | 2 | 3>(1);
   const [viewerConfirmed, setViewerConfirmed] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   
   const linkInputRef = useRef<HTMLInputElement>(null);
 
@@ -304,7 +299,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
       const isValid = isValidDriveLink(driveLink);
       setLinkValidated(isValid);
       if (isValid) {
-        setUploadStep(2);
         setSubmitError('');
       }
     } else {
@@ -375,7 +369,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     setShowSubmitForm(false);
     setLinkValidated(false);
     setViewerConfirmed(false);
-    setUploadStep(1);
   }, []);
 
   // Remove linked file
@@ -383,7 +376,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     setDriveLink('');
     setLinkValidated(false);
     setViewerConfirmed(false);
-    setUploadStep(1);
   }, []);
 
   return (
@@ -546,75 +538,40 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                 />
               </div>
 
-              {/* Step 2: Google Drive link */}
+              {/* Step 2: Google Drive link - Clean UI */}
               <div className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-5 h-5 text-xs font-bold rounded-full flex items-center justify-center ${
-                    task.requiresFile ? 'bg-indigo-600 text-white' : 'bg-slate-300 text-slate-600'
-                  }`}>2</div>
-                  <label className="text-sm font-medium text-slate-700">
-                    Attach file from Google Drive {task.requiresFile ? <span className="text-red-500">*</span> : <span className="text-slate-400">(optional)</span>}
-                  </label>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-5 h-5 text-xs font-bold rounded-full flex items-center justify-center ${
+                      task.requiresFile ? 'bg-indigo-600 text-white' : 'bg-slate-300 text-slate-600'
+                    }`}>2</div>
+                    <label className="text-sm font-medium text-slate-700">
+                      Attach file (Google Drive) {task.requiresFile ? <span className="text-red-500">*</span> : <span className="text-slate-400">(optional)</span>}
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowHelpModal(true)}
+                    className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 transition"
+                  >
+                    <span className="material-icons text-sm">help_outline</span>
+                    How to share
+                  </button>
                 </div>
 
                 {!linkValidated ? (
                   <div className="space-y-3">
-                    {/* Instructions box */}
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <p className="text-sm text-blue-800 font-medium mb-1">📁 Upload to YOUR OWN Google Drive</p>
-                      <p className="text-xs text-blue-700">Share the file as <span className="font-semibold">"Viewer"</span> and paste the link below.</p>
-                    </div>
-
-                    {/* Step indicator */}
-                    <div className="flex items-center gap-2 p-3 bg-white rounded-lg border border-slate-200">
-                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 1 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          uploadStep > 1 ? 'bg-green-500 text-white' : 'bg-indigo-600 text-white'
-                        }`}>
-                          {uploadStep > 1 ? '✓' : '1'}
-                        </div>
-                        <span className="text-xs text-slate-600">Upload</span>
-                      </div>
-                      <div className="flex-1 h-px bg-slate-200"></div>
-                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 2 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          uploadStep > 2 ? 'bg-green-500 text-white' : uploadStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
-                        }`}>{uploadStep > 2 ? '✓' : '2'}</div>
-                        <span className="text-xs text-slate-600">Share as Viewer</span>
-                      </div>
-                      <div className="flex-1 h-px bg-slate-200"></div>
-                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 3 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          uploadStep === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
-                        }`}>3</div>
-                        <span className="text-xs text-slate-600">Paste link</span>
-                      </div>
-                    </div>
-
-                    {/* Upload button */}
-                    <a
-                      href={GOOGLE_DRIVE_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-blue-50 border-2 border-dashed border-blue-300 hover:border-blue-400 rounded-xl transition-all group"
-                    >
-                      <img src="https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" alt="Drive" className="w-6 h-6" />
-                      <span className="text-sm font-medium text-blue-700 group-hover:text-blue-800">
-                        Open Google Drive (upload to your account)
-                      </span>
-                      <span className="material-icons text-blue-400 text-sm">open_in_new</span>
-                    </a>
-
-                    {/* Link input */}
+                    {/* Single clean input */}
                     <div className="relative">
+                      <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">link</span>
                       <input
                         ref={linkInputRef}
                         type="url"
                         value={driveLink}
                         onChange={(e) => setDriveLink(e.target.value)}
-                        placeholder="Paste your shared Google Drive link here..."
+                        placeholder="Paste Google Drive file link here"
                         disabled={currentStep !== 'idle' && currentStep !== 'error'}
-                        className={`w-full px-4 py-3 pr-10 border rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        className={`w-full pl-10 pr-10 py-3 border rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                           driveLink && !linkValidated 
                             ? 'border-amber-300 focus:ring-amber-500 focus:border-amber-500' 
                             : 'border-slate-200 focus:ring-indigo-500 focus:border-indigo-500'
@@ -625,7 +582,17 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                           <span className="material-icons text-amber-500 text-sm">warning</span>
                         </div>
                       )}
+                      {linkValidated && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <span className="material-icons text-green-500 text-sm">check_circle</span>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Helper text */}
+                    <p className="text-xs text-slate-500">
+                      Upload your file to Google Drive and share it as <span className="font-medium">Viewer</span>, then paste the link here.
+                    </p>
 
                     {driveLink && !linkValidated && (
                       <p className="text-xs text-amber-600 flex items-center gap-1">
@@ -633,42 +600,33 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                         Please enter a valid Google Drive link (e.g., drive.google.com/file/d/...)
                       </p>
                     )}
-
-                    <div className="text-xs text-slate-500 space-y-1">
-                      <p className="font-medium">💡 How to share:</p>
-                      <p>1. Upload file to your Drive → Right-click → Share</p>
-                      <p>2. Change access to <span className="font-semibold">"Anyone with the link"</span> → <span className="font-semibold">Viewer</span></p>
-                      <p>3. Click "Copy link" and paste above</p>
-                    </div>
                   </div>
                 ) : (
-                  /* Link validated - show success state with viewer confirmation */
+                  /* Link validated - show file preview and viewer confirmation */
                   <div className="space-y-3 animate-fadeIn">
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                    {/* File preview card */}
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-xl">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                          <span className="material-icons text-green-600">{getDriveFileIcon(driveLink)}</span>
+                        <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center">
+                          <span className="material-icons text-green-600 text-lg">{getDriveFileIcon(driveLink)}</span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-green-800">{getDriveFileType(driveLink)}</span>
-                            <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full">LINKED</span>
-                          </div>
-                          <p className="text-xs text-green-600 truncate mt-0.5">{driveLink}</p>
+                          <p className="text-sm font-medium text-green-800">{getDriveFileType(driveLink)}</p>
+                          <p className="text-xs text-green-600 truncate">{driveLink}</p>
                         </div>
                         <div className="flex items-center gap-1">
                           <a
                             href={driveLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"
+                            className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition"
                             title="Preview"
                           >
-                            <span className="material-icons text-sm">visibility</span>
+                            <span className="material-icons text-sm">open_in_new</span>
                           </a>
                           <button
                             onClick={removeLinkedFile}
-                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition"
                             title="Remove"
                           >
                             <span className="material-icons text-sm">close</span>
@@ -678,7 +636,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                     </div>
 
                     {/* Viewer confirmation checkbox */}
-                    <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                    <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${
                       viewerConfirmed 
                         ? 'bg-green-50 border-green-300' 
                         : 'bg-amber-50 border-amber-300 hover:border-amber-400'
@@ -696,13 +654,82 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                           {viewerConfirmed ? '✓ ' : ''}I have shared this file as "Viewer"
                         </p>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          Your manager will have read-only access to view/download the file.
+                          Your manager will have read-only access to view/download.
                         </p>
                       </div>
                     </label>
                   </div>
                 )}
               </div>
+
+              {/* Help Modal */}
+              {showHelpModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowHelpModal(false)}>
+                  <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-bold text-slate-900">How to Share from Google Drive</h3>
+                      <button
+                        onClick={() => setShowHelpModal(false)}
+                        className="p-1 hover:bg-slate-100 rounded-lg transition"
+                      >
+                        <span className="material-icons text-slate-500">close</span>
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div className="flex gap-3">
+                        <div className="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">1</div>
+                        <div>
+                          <p className="font-medium text-slate-800">Upload file to your Google Drive</p>
+                          <p className="text-sm text-slate-500">Go to drive.google.com and upload your file</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-3">
+                        <div className="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">2</div>
+                        <div>
+                          <p className="font-medium text-slate-800">Right-click → Share</p>
+                          <p className="text-sm text-slate-500">Open the sharing settings for your file</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-3">
+                        <div className="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">3</div>
+                        <div>
+                          <p className="font-medium text-slate-800">Change to "Anyone with the link"</p>
+                          <p className="text-sm text-slate-500">Click on "Restricted" and change access</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-3">
+                        <div className="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">4</div>
+                        <div>
+                          <p className="font-medium text-slate-800">Set permission to "Viewer"</p>
+                          <p className="text-sm text-slate-500 flex items-center gap-1">
+                            <span className="material-icons text-amber-500 text-sm">warning</span>
+                            Important: Must be Viewer (read-only)
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-3">
+                        <div className="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">5</div>
+                        <div>
+                          <p className="font-medium text-slate-800">Copy link and paste here</p>
+                          <p className="text-sm text-slate-500">Click "Copy link" button and paste above</p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <button
+                      onClick={() => setShowHelpModal(false)}
+                      className="w-full mt-6 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition"
+                    >
+                      Got it
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Submit actions */}
               <div className="flex gap-3 pt-2">
@@ -722,7 +749,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                     setSubmitError('');
                     setLinkValidated(false);
                     setViewerConfirmed(false);
-                    setUploadStep(1);
+                    setShowHelpModal(false);
                   }}
                   disabled={currentStep !== 'idle' && currentStep !== 'error'}
                   className="px-4 py-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-medium rounded-xl transition"
