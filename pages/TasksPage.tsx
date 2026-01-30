@@ -89,6 +89,36 @@ const hasLinkContent = (url: string): boolean => {
   return url.trim().length > 0;
 };
 
+// Validate Google Drive link format
+const isValidDriveLink = (url: string): boolean => {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  
+  // Accept various Google Drive URL formats
+  const validPatterns = [
+    'drive.google.com',
+    'docs.google.com',
+  ];
+  
+  return validPatterns.some(pattern => trimmed.includes(pattern));
+};
+
+// Get user-friendly error message for invalid links
+const getDriveLinkError = (url: string): string | null => {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return 'Link must start with https://';
+  }
+  
+  if (!isValidDriveLink(trimmed)) {
+    return 'Please paste a valid Google Drive or Google Docs link (drive.google.com or docs.google.com)';
+  }
+  
+  return null;
+};
+
 // Get file type from Drive link
 const getDriveFileType = (url: string): string => {
   if (url.includes('docs.google.com/document')) return 'Google Doc';
@@ -308,6 +338,15 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     if (task.requiresFile && !driveLink.trim()) {
       setSubmitError('Please paste a Google Drive link');
       return;
+    }
+
+    // Validate Drive link format if provided
+    if (driveLink.trim()) {
+      const linkError = getDriveLinkError(driveLink);
+      if (linkError) {
+        setSubmitError(linkError);
+        return;
+      }
     }
 
     // Validate viewer confirmation if file link is provided

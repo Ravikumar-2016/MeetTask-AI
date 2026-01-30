@@ -24,7 +24,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { Task, Meeting, FirestoreUser } from '../types';
 import { useToast } from '../hooks/useToast';
 import ToastContainer from '../components/ToastContainer';
-import { getFileIcon, canPreviewFile, openFile } from '../lib/fileUpload';
 
 // Priority colors
 const priorityColors: Record<string, string> = {
