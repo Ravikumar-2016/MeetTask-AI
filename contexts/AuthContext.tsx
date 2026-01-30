@@ -1,14 +1,29 @@
 /**
  * AuthContext.tsx - Authentication System for MeetTask AI (v2)
  * 
- * SIMPLIFIED ARCHITECTURE:
- * - Two roles: Manager and Employee
- * - Role selected during signup (required)
- * - Role stored in Firestore and included in user context
+ * ARCHITECTURE (IMPORTANT):
+ * 
+ * Firebase Auth is the SOURCE OF TRUTH for credentials (email/password).
+ * Firestore is ONLY for profile data (name, role, mtaiId, etc.).
+ * 
+ * LOGIN FLOW:
+ * 1. Firebase Auth validates credentials FIRST (signInWithEmailAndPassword)
+ * 2. Only after successful auth, fetch profile from Firestore
+ * 3. If Firestore profile missing, auto-create it (sync fix)
+ * 4. Never block login based on Firestore - Auth is primary
+ * 
+ * SIGNUP FLOW:
+ * 1. Create user in Firebase Auth FIRST
+ * 2. Then create Firestore document with uid from Auth
+ * 3. uid is the link between Auth and Firestore
+ * 
+ * PASSWORD RESET:
+ * - Uses Firebase Auth directly (sendPasswordResetEmail)
+ * - No Firestore dependency needed
  * 
  * STORAGE:
- * - users/{mtaiId} → User documents with role
- * - counters/users → { lastId: number } for ID generation
+ * - users/{mtaiId} → User documents with role, name, etc.
+ * - counters/users → { lastId: number } for MTAI ID generation
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
@@ -158,6 +173,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isEmployee = user?.role === 'employee';
 
   /**
+   * Auto-create Firestore profile for existing Firebase Auth users
+   * This handles the case where a user exists in Firebase Auth but not in Firestore
+   * (sync fix for users created before proper flow was implemented)
+   */
+  const autoCreateFirestoreProfile = useCallback(async (
+    firebaseUser: FirebaseUser,
+    provider: AuthProviderType
+  ): Promise<string> => {
+    if (!firebaseUser.email) {
+      throw new Error('Email is required');
+    }
+
+    const email = firebaseUser.email;
+    console.log('🔄 [Auth] Auto-creating Firestore profile for:', email);
+
+    // Generate new MTAI ID
+    const mtaiId = await generateMtaiId();
+    
+    // Default role to 'employee' for auto-synced users
+    // They can contact admin to change role if needed
+    const userData: FirestoreUser = {
+      uid: firebaseUser.uid,
+      mtaiId: mtaiId,
+      name: firebaseUser.displayName || email.split('@')[0],
+      email: email,
+      role: 'employee' as UserRole, // Default role for auto-synced users
+      authProviders: [provider],
+      photoURL: firebaseUser.photoURL || null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(doc(db, 'users', mtaiId), userData);
+    console.log('✅ [Auth] Auto-created profile:', mtaiId, '(default role: employee)');
+    
+    return mtaiId;
+  }, []);
+
+  /**
    * Create user in Firestore (for signup)
    */
   const createUserInFirestore = useCallback(async (
@@ -247,60 +301,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ============================================
 
   /**
-   * Email/Password Login (existing users only)
+   * Email/Password Login
+   * 
+   * CORRECT FLOW:
+   * 1. Try Firebase Auth FIRST (source of truth for credentials)
+   * 2. If auth succeeds, fetch Firestore profile
+   * 3. If Firestore profile missing, auto-create it (sync fix)
+   * 4. Only show "no account" error if Firebase Auth returns auth/user-not-found
    */
   const login = useCallback(async (email: string, password: string) => {
     try {
       console.log('🔐 [Auth] Logging in:', email);
       
-      // Check if user exists first
-      const existingUser = await findUserByEmail(email);
+      // Step 1: Try Firebase Auth FIRST - this is the source of truth for credentials
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      console.log('✅ [Auth] Firebase Auth successful for:', email);
+      
+      // Step 2: Fetch Firestore profile
+      let existingUser = await findUserByEmail(email);
+      
+      // Step 3: If Firestore profile is missing, auto-create it (sync fix)
       if (!existingUser) {
-        throw new Error('No account found with this email. Please sign up first.');
+        console.log('⚠️ [Auth] Firestore profile missing, auto-creating...');
+        await autoCreateFirestoreProfile(result.user, 'password');
+        existingUser = await findUserByEmail(email);
+      } else {
+        // Update existing user's auth info
+        await updateUserInFirestore(result.user, 'password', existingUser);
       }
       
-      const result = await signInWithEmailAndPassword(auth, email, password);
-      await updateUserInFirestore(result.user, 'password', existingUser);
-      
+      // Step 4: Build and set user object
       const userObj = await buildUserObject(result.user);
       if (userObj) {
         setUser(userObj);
-        console.log('✅ [Auth] Login successful:', userObj.mtaiId, 'role:', userObj.role);
+        console.log('✅ [Auth] Login complete:', userObj.mtaiId, 'role:', userObj.role);
       }
     } catch (error: any) {
       console.error('❌ [Auth] Login error:', error);
+      // Firebase Auth errors have .code property - use proper error messages
       if (error.code) {
         throw new Error(getAuthErrorMessage(error));
       }
       throw error;
     }
-  }, [updateUserInFirestore, buildUserObject]);
+  }, [autoCreateFirestoreProfile, updateUserInFirestore, buildUserObject]);
 
   /**
    * Email/Password Signup (requires name and role)
+   * 
+   * CORRECT FLOW:
+   * 1. Create user in Firebase Auth FIRST (source of truth for credentials)
+   * 2. Then create Firestore document using uid from Auth
+   * 3. uid is the primary link between Auth and Firestore
    */
   const signup = useCallback(async (email: string, password: string, name: string, role: UserRole) => {
     try {
       console.log('📝 [Auth] Signing up:', email, 'as', role);
       
-      // Check if user already exists
-      const existingUser = await findUserByEmail(email);
-      if (existingUser) {
-        throw new Error('An account with this email already exists. Please sign in.');
-      }
-      
+      // Step 1: Create user in Firebase Auth FIRST
+      // Firebase Auth will throw auth/email-already-in-use if account exists
       const result = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('✅ [Auth] Firebase Auth account created for:', email);
       
-      // Send verification email
+      // Step 2: Send verification email (non-blocking)
       try {
         await sendEmailVerification(result.user);
+        console.log('📧 [Auth] Verification email sent');
       } catch (e) {
         console.warn('⚠️ Could not send verification email');
       }
 
-      // Create Firestore document with role
+      // Step 3: Create Firestore document with role (using uid from Auth)
       await createUserInFirestore(result.user, 'password', name, role);
       
+      // Step 4: Build and set user object
       const userObj = await buildUserObject(result.user);
       if (userObj) {
         setUser(userObj);
@@ -405,9 +479,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Send password reset
+   * Uses Firebase Auth directly - no Firestore dependency needed
+   * Firebase will return auth/user-not-found if email doesn't exist
    */
   const sendPasswordReset = useCallback(async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
+    try {
+      console.log('📧 [Auth] Sending password reset to:', email);
+      await sendPasswordResetEmail(auth, email);
+      console.log('✅ [Auth] Password reset email sent');
+    } catch (error: any) {
+      console.error('❌ [Auth] Password reset error:', error);
+      if (error.code) {
+        throw new Error(getAuthErrorMessage(error));
+      }
+      throw error;
+    }
   }, []);
 
   /**
@@ -428,7 +514,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const userObj = await buildUserObject(firebaseUser);
+        console.log('🔄 [Auth] Auth state changed - user:', firebaseUser.email);
+        
+        // Try to build user object from Firestore
+        let userObj = await buildUserObject(firebaseUser);
+        
+        // If Firestore profile is missing but Firebase Auth user exists,
+        // auto-create the profile (sync fix for edge cases)
+        if (!userObj && firebaseUser.email) {
+          console.log('⚠️ [Auth] Firestore profile missing for authenticated user, auto-creating...');
+          try {
+            // Determine provider from Firebase user
+            const hasGoogleProvider = firebaseUser.providerData.some(p => p.providerId === 'google.com');
+            const provider: AuthProviderType = hasGoogleProvider ? 'google' : 'password';
+            await autoCreateFirestoreProfile(firebaseUser, provider);
+            userObj = await buildUserObject(firebaseUser);
+          } catch (syncError) {
+            console.error('❌ [Auth] Failed to auto-create profile:', syncError);
+          }
+        }
+        
         setUser(userObj);
       } else {
         setUser(null);
@@ -437,7 +542,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
-  }, [buildUserObject]);
+  }, [buildUserObject, autoCreateFirestoreProfile]);
 
   // ============================================
   // CONTEXT VALUE

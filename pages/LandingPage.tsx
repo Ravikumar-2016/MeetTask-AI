@@ -57,10 +57,7 @@ const LandingPage: React.FC = () => {
 
       {/* Hero Section */}
       <section className="px-4 sm:px-8 py-12 sm:py-20 text-center max-w-5xl mx-auto">
-        <div className="inline-flex items-center px-4 py-2 bg-indigo-50 rounded-full mb-6 text-sm font-medium text-indigo-700">
-          <span className="material-icons text-sm mr-2">school</span>
-          College Project Demo
-        </div>
+        
         <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold text-slate-900 leading-tight mb-6">
           From Meetings to <br className="hidden sm:block" />
           <span className="bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Tasks Assigned</span>
@@ -86,11 +83,9 @@ const LandingPage: React.FC = () => {
                   <span className="material-icons text-2xl sm:text-3xl text-indigo-400">upload_file</span>
                 </div>
                 <p className="text-xs sm:text-sm font-medium text-slate-300">Manager</p>
-                <p className="font-bold text-sm sm:text-base">Uploads Meeting</p>
               </div>
               
               <span className="material-icons text-slate-600 hidden sm:block">arrow_forward</span>
-              <span className="material-icons text-slate-600 rotate-90 sm:hidden">arrow_forward</span>
               
               {/* Step 2 */}
               <div className="flex-1 text-center p-3 sm:p-4">
@@ -98,11 +93,9 @@ const LandingPage: React.FC = () => {
                   <span className="material-icons text-2xl sm:text-3xl text-purple-400">record_voice_over</span>
                 </div>
                 <p className="text-xs sm:text-sm font-medium text-slate-300">AI Engine</p>
-                <p className="font-bold text-sm sm:text-base">Transcribes Audio</p>
               </div>
               
               <span className="material-icons text-slate-600 hidden sm:block">arrow_forward</span>
-              <span className="material-icons text-slate-600 rotate-90 sm:hidden">arrow_forward</span>
               
               {/* Step 3 */}
               <div className="flex-1 text-center p-3 sm:p-4">
@@ -110,11 +103,9 @@ const LandingPage: React.FC = () => {
                   <span className="material-icons text-2xl sm:text-3xl text-emerald-400">assignment_ind</span>
                 </div>
                 <p className="text-xs sm:text-sm font-medium text-slate-300">Manager</p>
-                <p className="font-bold text-sm sm:text-base">Assigns Tasks</p>
               </div>
               
               <span className="material-icons text-slate-600 hidden sm:block">arrow_forward</span>
-              <span className="material-icons text-slate-600 rotate-90 sm:hidden">arrow_forward</span>
               
               {/* Step 4 */}
               <div className="flex-1 text-center p-3 sm:p-4">
@@ -122,7 +113,6 @@ const LandingPage: React.FC = () => {
                   <span className="material-icons text-2xl sm:text-3xl text-amber-400">add_link</span>
                 </div>
                 <p className="text-xs sm:text-sm font-medium text-slate-300">Employee</p>
-                <p className="font-bold text-sm sm:text-base">Submits via Drive</p>
               </div>
             </div>
           </div>
@@ -284,29 +274,6 @@ const LandingPage: React.FC = () => {
         </div>
       </section>
 
-      {/* Tech Stack */}
-      <section className="py-16 sm:py-24 px-4 sm:px-8">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-2xl sm:text-3xl font-bold mb-8 sm:mb-12">Built With Modern Tech</h2>
-          <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
-            {[
-              { name: 'React', icon: '⚛️' },
-              { name: 'TypeScript', icon: '📘' },
-              { name: 'Firebase', icon: '🔥' },
-              { name: 'Tailwind CSS', icon: '🎨' },
-              { name: 'Vercel', icon: '▲' },
-              { name: 'AssemblyAI', icon: '🎙️' },
-              { name: 'Cloudinary', icon: '☁️' },
-            ].map((tech, i) => (
-              <div key={i} className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-sm sm:text-base font-medium text-slate-700 hover:bg-slate-200 transition">
-                <span>{tech.icon}</span>
-                <span>{tech.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* CTA Footer */}
       <section className="bg-gradient-to-r from-indigo-600 to-purple-600 py-12 sm:py-16 px-4 sm:px-8 text-center text-white">
         <h2 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">Ready to Get Started?</h2>
@@ -325,7 +292,7 @@ const LandingPage: React.FC = () => {
             </div>
             <span className="font-bold text-white">MeetTask AI</span>
           </div>
-          <p className="text-sm">© 2026 MeetTask AI - College Project Demo</p>
+          <p className="text-sm">© 2026 MeetTask AI</p>
         </div>
       </footer>
       
