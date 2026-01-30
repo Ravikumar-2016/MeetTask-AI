@@ -49,6 +49,57 @@ const statusLabels: Record<string, string> = {
   blocked: 'Blocked',
 };
 
+// Get Drive file icon from URL
+const getDriveFileIcon = (url: string): string => {
+  if (url.includes('docs.google.com/document')) return 'description';
+  if (url.includes('docs.google.com/spreadsheets')) return 'table_chart';
+  if (url.includes('docs.google.com/presentation')) return 'slideshow';
+  if (url.includes('drive.google.com/drive/folders')) return 'folder';
+  return 'insert_drive_file';
+};
+
+// Get Drive file type from URL
+const getDriveFileType = (url: string): string => {
+  if (url.includes('docs.google.com/document')) return 'Google Doc';
+  if (url.includes('docs.google.com/spreadsheets')) return 'Google Sheets';
+  if (url.includes('docs.google.com/presentation')) return 'Google Slides';
+  if (url.includes('drive.google.com/drive/folders')) return 'Google Drive Folder';
+  return 'Google Drive File';
+};
+
+// Check if submission is recent (within last hour)
+const isRecentSubmission = (submittedAt: Timestamp | string | null | undefined): boolean => {
+  if (!submittedAt) return false;
+  try {
+    const date = submittedAt instanceof Timestamp ? submittedAt.toDate() : new Date(submittedAt);
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    return date > hourAgo;
+  } catch {
+    return false;
+  }
+};
+
+// Task Card Skeleton
+const TaskCardSkeleton: React.FC = () => (
+  <div className="bg-white rounded-xl border border-slate-200 p-4 animate-pulse">
+    <div className="flex items-start justify-between gap-4">
+      <div className="flex-1 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="h-5 w-16 bg-slate-200 rounded"></div>
+          <div className="h-5 w-48 bg-slate-200 rounded"></div>
+          <div className="h-5 w-16 bg-slate-100 rounded"></div>
+        </div>
+        <div className="h-4 w-64 bg-slate-100 rounded"></div>
+        <div className="h-4 w-full bg-slate-50 rounded"></div>
+      </div>
+      <div className="space-y-2 text-right">
+        <div className="h-3 w-12 bg-slate-100 rounded"></div>
+        <div className="h-4 w-20 bg-slate-200 rounded"></div>
+      </div>
+    </div>
+  </div>
+);
+
 const TaskManagerPage: React.FC = () => {
   const { user, isManager, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -346,11 +397,30 @@ const TaskManagerPage: React.FC = () => {
     return true;
   });
 
-  // Loading state
+  // Loading state with skeletons
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      <div className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Task Manager</h1>
+            <p className="text-slate-500 mt-1">Create and manage tasks for your team</p>
+          </div>
+          <div className="h-10 w-32 bg-slate-200 rounded-xl animate-pulse"></div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 animate-pulse">
+              <div className="h-8 w-12 bg-slate-200 rounded mb-2"></div>
+              <div className="h-4 w-16 bg-slate-100 rounded"></div>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-3">
+          {[1, 2, 3].map(i => (
+            <TaskCardSkeleton key={i} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -621,14 +691,15 @@ const TaskManagerPage: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredTasks.map((task) => (
+          {filteredTasks.map((task, index) => (
             <div
               key={task.id}
-              className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition"
+              className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-all duration-300 animate-fadeIn"
+              style={{ animationDelay: `${index * 50}ms` }}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{task.taskId}</span>
                     <h3 className="font-semibold text-slate-900 truncate">{task.title}</h3>
                     <span className={`px-2 py-0.5 rounded text-xs font-medium border ${priorityColors[task.priority]}`}>
@@ -637,6 +708,11 @@ const TaskManagerPage: React.FC = () => {
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColors[task.status]}`}>
                       {statusLabels[task.status]}
                     </span>
+                    {task.submissionText && isRecentSubmission(task.submittedAt) && (
+                      <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full animate-pulse">
+                        NEW SUBMISSION
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-slate-500 mb-2">
                     {task.meetingTitle} • Assigned to: <span className="font-medium">{task.assignedToName}</span>
@@ -651,33 +727,74 @@ const TaskManagerPage: React.FC = () => {
                     <p className="text-sm text-slate-600 line-clamp-2">{task.description}</p>
                   )}
                   
-                  {/* Show submission if exists */}
+                  {/* Enhanced submission display */}
                   {task.submissionText && (
-                    <div className="mt-3 p-3 bg-green-50 border border-green-100 rounded-lg">
-                      <p className="text-xs font-semibold text-green-700 mb-1">Employee Submission:</p>
-                      <p className="text-sm text-green-800">{task.submissionText}</p>
+                    <div className={`mt-3 p-4 rounded-xl border transition-all ${
+                      isRecentSubmission(task.submittedAt) 
+                        ? 'bg-green-50 border-green-200 ring-2 ring-green-100' 
+                        : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`material-icons text-sm ${isRecentSubmission(task.submittedAt) ? 'text-green-600' : 'text-slate-500'}`}>
+                            assignment_turned_in
+                          </span>
+                          <span className={`text-xs font-semibold ${isRecentSubmission(task.submittedAt) ? 'text-green-700' : 'text-slate-600'}`}>
+                            Employee Submission
+                          </span>
+                        </div>
+                        {task.submittedAt && (
+                          <span className="text-xs text-slate-400">
+                            {formatDate(task.submittedAt)}
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-sm ${isRecentSubmission(task.submittedAt) ? 'text-green-800' : 'text-slate-700'}`}>
+                        {task.submissionText}
+                      </p>
+                      
+                      {/* Enhanced file attachment display */}
                       {task.submissionFileUrl && (
-                        <div className="mt-2 flex items-center gap-2 flex-wrap">
-                          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-green-200 rounded-lg">
-                            <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
-                            <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Attachment'}</span>
+                        <div className="mt-3 p-3 bg-white rounded-lg border border-slate-200">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                              isRecentSubmission(task.submittedAt) ? 'bg-green-100' : 'bg-blue-100'
+                            }`}>
+                              <span className={`material-icons ${
+                                isRecentSubmission(task.submittedAt) ? 'text-green-600' : 'text-blue-600'
+                              }`}>
+                                {getDriveFileIcon(task.submissionFileUrl)}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">
+                                {task.submissionFileName || getDriveFileType(task.submissionFileUrl)}
+                              </p>
+                              <p className="text-xs text-slate-500">Google Drive</p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={task.submissionFileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition"
+                                title="Open in Google Drive"
+                              >
+                                <span className="material-icons text-sm">open_in_new</span>
+                                Open
+                              </a>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(task.submissionFileUrl!);
+                                  success('Link copied to clipboard!');
+                                }}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition"
+                                title="Copy link"
+                              >
+                                <span className="material-icons text-sm">content_copy</span>
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', true)}
-                            className="inline-flex items-center gap-1 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
-                          >
-                            <span className="material-icons text-sm">download</span>
-                            Download
-                          </button>
-                          {canPreviewFile(task.submissionFileName || '') && (
-                            <button
-                              onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', false)}
-                              className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
-                            >
-                              <span className="material-icons text-sm">visibility</span>
-                              Preview
-                            </button>
-                          )}
                         </div>
                       )}
                     </div>
@@ -698,6 +815,17 @@ const TaskManagerPage: React.FC = () => {
           ))}
         </div>
       )}
+      
+      {/* CSS Animations */}
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.3s ease-out forwards;
+        }
+      `}</style>
       </div>
     </>
   );
