@@ -84,18 +84,9 @@ const formatDate = (dateStr: string | Timestamp | undefined): string => {
   }
 };
 
-// Validate Google Drive link
-const isValidDriveLink = (url: string): boolean => {
-  if (!url.trim()) return false;
-  const drivePatterns = [
-    /drive\.google\.com\/file\/d\//,
-    /drive\.google\.com\/open\?id=/,
-    /docs\.google\.com\/document/,
-    /docs\.google\.com\/spreadsheets/,
-    /docs\.google\.com\/presentation/,
-    /drive\.google\.com\/drive\/folders\//,
-  ];
-  return drivePatterns.some(pattern => pattern.test(url));
+// Check if link has content (no regex validation - accept any link)
+const hasLinkContent = (url: string): boolean => {
+  return url.trim().length > 0;
 };
 
 // Get file type from Drive link
@@ -284,7 +275,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
   const [submitError, setSubmitError] = useState('');
   const [currentStep, setCurrentStep] = useState<SubmissionStep>('idle');
   const [showSuccess, setShowSuccess] = useState(false);
-  const [linkValidated, setLinkValidated] = useState(false);
   const [viewerConfirmed, setViewerConfirmed] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   
@@ -292,19 +282,16 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed';
   const hasSubmission = task.submissionText || task.submissionFileUrl;
+  
+  // Computed: check if link has content
+  const hasLink = hasLinkContent(driveLink);
 
-  // Validate link on change
+  // Clear error when user types link or checks box
   useEffect(() => {
-    if (driveLink.trim()) {
-      const isValid = isValidDriveLink(driveLink);
-      setLinkValidated(isValid);
-      if (isValid) {
-        setSubmitError('');
-      }
-    } else {
-      setLinkValidated(false);
+    if (driveLink.trim() || viewerConfirmed) {
+      setSubmitError('');
     }
-  }, [driveLink]);
+  }, [driveLink, viewerConfirmed]);
 
   // Handle submission with progress animation
   const handleSubmit = useCallback(async () => {
@@ -318,13 +305,13 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     }
 
     // Validate file link if required
-    if (task.requiresFile && !linkValidated) {
-      setSubmitError('This task requires a valid Google Drive link');
+    if (task.requiresFile && !driveLink.trim()) {
+      setSubmitError('Please paste a Google Drive link');
       return;
     }
 
-    // Validate viewer confirmation if file is attached
-    if (linkValidated && !viewerConfirmed) {
+    // Validate viewer confirmation if file link is provided
+    if (driveLink.trim() && !viewerConfirmed) {
       setSubmitError('Please confirm you have shared the file as Viewer');
       return;
     }
@@ -340,8 +327,8 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
       await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Build file info
-    const fileInfo = driveLink.trim() && linkValidated ? {
+    // Build file info - just use the link if provided
+    const fileInfo = driveLink.trim() ? {
       url: driveLink.trim(),
       name: getDriveFileType(driveLink),
       size: 0,
@@ -358,7 +345,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
       setCurrentStep('error');
       setSubmitError('Submission failed. Please try again.');
     }
-  }, [task.id, task.requiresFile, submissionText, driveLink, linkValidated, onSubmit]);
+  }, [task.id, task.requiresFile, submissionText, driveLink, viewerConfirmed, onSubmit]);
 
   // Handle success completion
   const handleSuccessComplete = useCallback(() => {
@@ -367,14 +354,12 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     setSubmissionText('');
     setDriveLink('');
     setShowSubmitForm(false);
-    setLinkValidated(false);
     setViewerConfirmed(false);
   }, []);
 
   // Remove linked file
   const removeLinkedFile = useCallback(() => {
     setDriveLink('');
-    setLinkValidated(false);
     setViewerConfirmed(false);
   }, []);
 
@@ -467,38 +452,102 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
             </div>
           </div>
 
-          {/* Existing submission display */}
+          {/* Existing submission display - Locked state */}
           {hasSubmission && (
-            <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl animate-fadeIn">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="material-icons text-green-600 text-sm">check_circle</span>
-                <span className="text-sm font-semibold text-green-700">Your Submission</span>
+            <div className="mt-4 p-4 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl animate-fadeIn shadow-sm">
+              {/* Header with status badge */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                    <span className="material-icons text-green-600 text-lg">task_alt</span>
+                  </div>
+                  <div>
+                    <span className="text-sm font-semibold text-green-800">Submitted Successfully</span>
+                    <div className="flex items-center gap-1 text-xs text-green-600">
+                      <span className="material-icons text-[10px]">lock</span>
+                      Submission locked
+                    </div>
+                  </div>
+                </div>
                 {task.submittedAt && (
-                  <span className="text-xs text-green-600 ml-auto">
-                    Submitted {formatDate(task.submittedAt)}
-                  </span>
+                  <div className="text-right">
+                    <span className="px-2.5 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                      ✓ Submitted
+                    </span>
+                    <p className="text-xs text-green-600 mt-1">{formatDate(task.submittedAt)}</p>
+                  </div>
                 )}
               </div>
+
+              {/* Submitted text - read only */}
               {task.submissionText && (
-                <p className="text-sm text-green-800">{task.submissionText}</p>
-              )}
-              {task.submissionFileUrl && (
-                <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-white border border-green-200 rounded-lg">
-                    <span className="material-icons text-green-600">{getDriveFileIcon(task.submissionFileUrl)}</span>
-                    <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Google Drive File'}</span>
-                  </div>
-                  <a
-                    href={task.submissionFileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
-                  >
-                    <span className="material-icons text-sm">open_in_new</span>
-                    Open in Drive
-                  </a>
+                <div className="p-3 bg-white/60 border border-green-100 rounded-lg mb-3">
+                  <p className="text-xs text-green-600 font-medium mb-1">Your Response:</p>
+                  <p className="text-sm text-green-900">{task.submissionText}</p>
                 </div>
               )}
+
+              {/* Attached file - with preview option */}
+              {task.submissionFileUrl && (
+                <div className="p-3 bg-white border border-green-200 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                      <span className="material-icons text-green-600">{getDriveFileIcon(task.submissionFileUrl)}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-green-800 truncate">
+                        {task.submissionFileName || getDriveFileType(task.submissionFileUrl)}
+                      </p>
+                      <p className="text-xs text-green-600">Shared as Viewer</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={task.submissionFileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition"
+                      >
+                        <span className="material-icons text-sm">open_in_new</span>
+                        View File
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Awaiting review notice */}
+              <div className="mt-3 flex items-center gap-2 text-xs text-green-700">
+                <span className="material-icons text-sm">schedule</span>
+                Awaiting manager review
+              </div>
+            </div>
+          )}
+
+          {/* Rejection alert - Manager requested resubmission */}
+          {task.rejectionReason && !hasSubmission && (
+            <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200 rounded-xl animate-fadeIn">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                  <span className="material-icons text-red-600">error_outline</span>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-bold text-red-700">Resubmission Required</span>
+                    <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full">ACTION NEEDED</span>
+                  </div>
+                  <p className="text-sm text-red-800 mb-2">{task.rejectionReason}</p>
+                  {task.rejectedAt && (
+                    <p className="text-xs text-red-600">
+                      Rejected on {formatDate(task.rejectedAt)}
+                    </p>
+                  )}
+                  <div className="mt-3 p-2.5 bg-white/60 border border-red-100 rounded-lg">
+                    <p className="text-xs text-slate-600">
+                      <span className="font-medium">How to fix:</span> Open your file in Google Drive → Click Share → Ensure permission is set to <span className="font-semibold text-red-700">"Viewer"</span> (not Editor) → Submit again.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -559,7 +608,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                   </button>
                 </div>
 
-                {!linkValidated ? (
+                {!hasLink ? (
                   <div className="space-y-3">
                     {/* Single clean input */}
                     <div className="relative">
@@ -571,35 +620,14 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                         onChange={(e) => setDriveLink(e.target.value)}
                         placeholder="Paste Google Drive file link here"
                         disabled={currentStep !== 'idle' && currentStep !== 'error'}
-                        className={`w-full pl-10 pr-10 py-3 border rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                          driveLink && !linkValidated 
-                            ? 'border-amber-300 focus:ring-amber-500 focus:border-amber-500' 
-                            : 'border-slate-200 focus:ring-indigo-500 focus:border-indigo-500'
-                        }`}
+                        className="w-full pl-10 pr-10 py-3 border border-slate-200 focus:ring-indigo-500 focus:border-indigo-500 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       />
-                      {driveLink && !linkValidated && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <span className="material-icons text-amber-500 text-sm">warning</span>
-                        </div>
-                      )}
-                      {linkValidated && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <span className="material-icons text-green-500 text-sm">check_circle</span>
-                        </div>
-                      )}
                     </div>
 
                     {/* Helper text */}
                     <p className="text-xs text-slate-500">
                       Upload your file to Google Drive and share it as <span className="font-medium">Viewer</span>, then paste the link here.
                     </p>
-
-                    {driveLink && !linkValidated && (
-                      <p className="text-xs text-amber-600 flex items-center gap-1">
-                        <span className="material-icons text-xs">info</span>
-                        Please enter a valid Google Drive link (e.g., drive.google.com/file/d/...)
-                      </p>
-                    )}
                   </div>
                 ) : (
                   /* Link validated - show file preview and viewer confirmation */
@@ -658,6 +686,14 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                         </p>
                       </div>
                     </label>
+
+                    {/* Warning about Editor permission */}
+                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                      <span className="material-icons text-amber-500 text-sm mt-0.5">warning</span>
+                      <p className="text-xs text-amber-700">
+                        <span className="font-medium">Important:</span> If file is shared as <span className="font-semibold">Editor</span>, your submission may be rejected by your manager and you'll need to resubmit with correct permissions.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -735,7 +771,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={handleSubmit}
-                  disabled={(currentStep !== 'idle' && currentStep !== 'error') || !submissionText.trim() || (task.requiresFile && !linkValidated) || (linkValidated && !viewerConfirmed)}
+                  disabled={(currentStep !== 'idle' && currentStep !== 'error') || !submissionText.trim() || (task.requiresFile && !hasLink) || (hasLink && !viewerConfirmed)}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:from-indigo-300 disabled:to-indigo-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 disabled:shadow-none"
                 >
                   <span className="material-icons text-sm">send</span>
@@ -747,7 +783,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                     setSubmissionText('');
                     setDriveLink('');
                     setSubmitError('');
-                    setLinkValidated(false);
                     setViewerConfirmed(false);
                     setShowHelpModal(false);
                   }}
@@ -834,6 +869,7 @@ const TasksPage: React.FC = () => {
           const data = doc.data();
           tasksData.push({
             id: doc.id,
+            taskId: data.taskId || doc.id,
             meetingId: data.meetingId,
             meetingTitle: data.meetingTitle,
             title: data.title || 'Untitled Task',
@@ -849,8 +885,10 @@ const TasksPage: React.FC = () => {
             submissionFileUrl: data.submissionFileUrl,
             submissionFileName: data.submissionFileName,
             submittedAt: data.submittedAt?.toDate?.()?.toISOString(),
+            rejectedAt: data.rejectedAt?.toDate?.()?.toISOString(),
+            rejectionReason: data.rejectionReason,
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
-          });
+          } as Task);
         });
 
         // Sort by priority

@@ -207,6 +207,10 @@ export interface Task {
   submissionFileName?: string | null;
   submittedAt?: any;
   
+  // Manager rejection (for permission issues)
+  rejectedAt?: any;
+  rejectionReason?: string | null;  // e.g., "Permission issue: File shared as Editor instead of Viewer"
+  
   // Timestamps
   createdAt?: any;
   updatedAt?: any;
