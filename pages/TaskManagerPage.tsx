@@ -126,9 +126,6 @@ const TaskManagerPage: React.FC = () => {
   // Filter state
   const [filterMeeting, setFilterMeeting] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  
-  // Rejection state
-  const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
 
   // Redirect non-managers
   useEffect(() => {
@@ -375,44 +372,6 @@ const TaskManagerPage: React.FC = () => {
       setCreating(false);
     }
   }, [selectedMeetingId, taskTitle, taskDescription, requiresFile, assignedEmployee, priority, dueDate, success, showError]);
-
-  // Handle permission issue report - resets task to pending for resubmission
-  const handleReportPermissionIssue = useCallback(async (taskId: string, taskTitle: string) => {
-    if (!confirm(`Report permission issue for "${taskTitle}"?\n\nThis will reset the task to Pending and require the employee to resubmit with correct Viewer permissions.`)) {
-      return;
-    }
-
-    setRejectingTaskId(taskId);
-
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Not authenticated');
-
-      const res = await fetch('/api/reset-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          taskId,
-          reason: 'Permission issue: File was shared as Editor instead of Viewer. Please reshare as Viewer and resubmit.',
-        }),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Failed to reset task');
-      }
-
-      success(`Task reset to Pending. Employee will be notified to resubmit with correct permissions.`);
-    } catch (err: any) {
-      console.error('[TaskManager] Error resetting task:', err);
-      showError(err.message || 'Failed to report permission issue');
-    } finally {
-      setRejectingTaskId(null);
-    }
-  }, [success, showError]);
 
   // Format date helper
   const formatDate = (timestamp: Timestamp | string | null | undefined): string => {
@@ -835,36 +794,6 @@ const TaskManagerPage: React.FC = () => {
                                 <span className="material-icons text-sm">content_copy</span>
                               </button>
                             </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Report Permission Issue button - for when file is shared as Editor */}
-                      {task.submissionFileUrl && task.status !== 'completed' && (
-                        <div className="mt-3 pt-3 border-t border-slate-200">
-                          <div className="flex items-center justify-between">
-                            <p className="text-xs text-slate-500">
-                              <span className="material-icons text-[12px] mr-1 align-middle">info</span>
-                              If file has incorrect permissions (Editor instead of Viewer):
-                            </p>
-                            <button
-                              onClick={() => handleReportPermissionIssue(task.id, task.title)}
-                              disabled={rejectingTaskId === task.id}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 disabled:bg-amber-50 text-amber-700 disabled:text-amber-400 text-xs font-medium rounded-lg transition"
-                              title="Report permission issue and request resubmission"
-                            >
-                              {rejectingTaskId === task.id ? (
-                                <>
-                                  <span className="animate-spin">⏳</span>
-                                  Resetting...
-                                </>
-                              ) : (
-                                <>
-                                  <span className="material-icons text-sm">report_problem</span>
-                                  Report Permission Issue
-                                </>
-                              )}
-                            </button>
                           </div>
                         </div>
                       )}

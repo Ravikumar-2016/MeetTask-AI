@@ -523,34 +523,6 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
             </div>
           )}
 
-          {/* Rejection alert - Manager requested resubmission */}
-          {task.rejectionReason && !hasSubmission && (
-            <div className="mt-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200 rounded-xl animate-fadeIn">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
-                  <span className="material-icons text-red-600">error_outline</span>
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-bold text-red-700">Resubmission Required</span>
-                    <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full">ACTION NEEDED</span>
-                  </div>
-                  <p className="text-sm text-red-800 mb-2">{task.rejectionReason}</p>
-                  {task.rejectedAt && (
-                    <p className="text-xs text-red-600">
-                      Rejected on {formatDate(task.rejectedAt)}
-                    </p>
-                  )}
-                  <div className="mt-3 p-2.5 bg-white/60 border border-red-100 rounded-lg">
-                    <p className="text-xs text-slate-600">
-                      <span className="font-medium">How to fix:</span> Open your file in Google Drive → Click Share → Ensure permission is set to <span className="font-semibold text-red-700">"Viewer"</span> (not Editor) → Submit again.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Submit form - Guided flow */}
           {showSubmitForm && !hasSubmission && (
             <div className="mt-4 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 animate-slideDown">
@@ -682,18 +654,10 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                           {viewerConfirmed ? '✓ ' : ''}I have shared this file as "Viewer"
                         </p>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          Your manager will have read-only access to view/download.
+                          Manager will have read-only access to view your file.
                         </p>
                       </div>
                     </label>
-
-                    {/* Warning about Editor permission */}
-                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-                      <span className="material-icons text-amber-500 text-sm mt-0.5">warning</span>
-                      <p className="text-xs text-amber-700">
-                        <span className="font-medium">Important:</span> If file is shared as <span className="font-semibold">Editor</span>, your submission may be rejected by your manager and you'll need to resubmit with correct permissions.
-                      </p>
-                    </div>
                   </div>
                 )}
               </div>
@@ -885,8 +849,6 @@ const TasksPage: React.FC = () => {
             submissionFileUrl: data.submissionFileUrl,
             submissionFileName: data.submissionFileName,
             submittedAt: data.submittedAt?.toDate?.()?.toISOString(),
-            rejectedAt: data.rejectedAt?.toDate?.()?.toISOString(),
-            rejectionReason: data.rejectionReason,
             createdAt: data.createdAt?.toDate?.()?.toISOString(),
           } as Task);
         });
