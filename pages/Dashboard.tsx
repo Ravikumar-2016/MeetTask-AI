@@ -29,18 +29,20 @@ const StatCard: React.FC<{
   color: string; 
   loading?: boolean 
 }> = ({ title, value, icon, color, loading }) => (
-  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-    <div className="flex items-center justify-between mb-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
-        <span className="material-icons text-white">{icon}</span>
+  <div className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow duration-200">
+    <div className="flex items-center gap-3 sm:gap-0 sm:flex-col sm:items-start">
+      <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl flex items-center justify-center ${color} shrink-0 sm:mb-4`}>
+        <span className="material-icons text-white text-lg sm:text-xl">{icon}</span>
+      </div>
+      <div className="flex-1 sm:w-full">
+        <p className="text-slate-500 text-xs sm:text-sm font-medium">{title}</p>
+        {loading ? (
+          <div className="h-7 sm:h-9 w-12 sm:w-16 bg-slate-100 rounded animate-pulse mt-1"></div>
+        ) : (
+          <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mt-0.5 sm:mt-1">{value}</h3>
+        )}
       </div>
     </div>
-    <p className="text-slate-500 text-sm font-medium">{title}</p>
-    {loading ? (
-      <div className="h-9 w-16 bg-slate-100 rounded animate-pulse mt-1"></div>
-    ) : (
-      <h3 className="text-3xl font-bold text-slate-900 mt-1">{value}</h3>
-    )}
   </div>
 );
 
@@ -82,26 +84,26 @@ const ManagerDashboard: React.FC = () => {
   const displayName = user?.name || user?.displayName || 'there';
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
             Welcome back, {displayName.split(' ')[0]}!
           </h1>
-          <p className="text-slate-500">Manage your meetings and assign tasks to your team.</p>
+          <p className="text-sm sm:text-base text-slate-500">Manage your meetings and assign tasks to your team.</p>
         </div>
         <Link 
           to="/upload" 
-          className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-100 flex items-center justify-center space-x-2"
+          className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl font-bold hover:opacity-90 transition shadow-lg shadow-indigo-200 flex items-center justify-center gap-2"
         >
-          <span className="material-icons text-[20px]">add</span>
+          <span className="material-icons text-lg">add</span>
           <span>Upload Meeting</span>
         </Link>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         <StatCard 
           title="Total Meetings" 
           value={stats.totalMeetings} 
@@ -133,85 +135,76 @@ const ManagerDashboard: React.FC = () => {
       </div>
 
       {/* Content Grid */}
-      <div className="grid lg:grid-cols-3 gap-8">
+      <div className="grid lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Recent Meetings */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">Recent Meetings</h2>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">Recent Meetings</h2>
             <Link to="/meetings" className="text-sm font-bold text-indigo-600 hover:underline">View All</Link>
           </div>
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden">
             {meetingsLoading ? (
-              <div className="p-6 space-y-4">
+              <div className="p-4 sm:p-6 space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-center space-x-4">
-                    <div className="h-4 bg-slate-100 rounded w-1/3 animate-pulse"></div>
-                    <div className="h-4 bg-slate-100 rounded w-1/4 animate-pulse"></div>
-                    <div className="h-4 bg-slate-100 rounded w-16 animate-pulse"></div>
+                  <div key={i} className="flex items-center gap-3 sm:gap-4">
+                    <div className="h-10 w-10 bg-slate-100 rounded-lg animate-pulse shrink-0"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-slate-100 rounded w-3/4 animate-pulse"></div>
+                      <div className="h-3 bg-slate-100 rounded w-1/2 animate-pulse"></div>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : recentMeetings.length === 0 ? (
-              <div className="p-12 text-center">
-                <span className="material-icons text-slate-300 text-5xl mb-4">video_library</span>
-                <h3 className="font-bold text-slate-900 mb-2">No meetings yet</h3>
-                <p className="text-slate-500 mb-4">Upload your first meeting to get started</p>
+              <div className="p-8 sm:p-12 text-center">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <span className="material-icons text-slate-300 text-3xl sm:text-4xl">video_library</span>
+                </div>
+                <h3 className="font-bold text-slate-900 mb-2 text-sm sm:text-base">No meetings yet</h3>
+                <p className="text-slate-500 mb-4 text-sm">Upload your first meeting to get started</p>
                 <Link 
                   to="/upload" 
-                  className="inline-flex items-center space-x-2 text-indigo-600 font-bold hover:underline"
+                  className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-600 px-4 py-2 rounded-lg font-bold hover:bg-indigo-100 transition text-sm"
                 >
                   <span className="material-icons text-[18px]">add</span>
                   <span>Upload Meeting</span>
                 </Link>
               </div>
             ) : (
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Title</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Date</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Status</th>
-                    <th className="px-6 py-4"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {recentMeetings.map((meeting) => (
-                    <tr 
-                      key={meeting.id} 
-                      className="hover:bg-slate-50 transition cursor-pointer" 
-                      onClick={() => navigate(`/meetings/${meeting.id}`)}
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center space-x-3">
-                          <span className="material-icons text-slate-400 text-lg">
-                            {getFileTypeIcon(meeting.fileType)}
-                          </span>
-                          <p className="font-semibold text-slate-900">{meeting.title}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-600 text-sm">{meeting.date}</td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${getStatusBadgeClass(meeting.status)}`}>
-                          {meeting.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="material-icons text-slate-400">chevron_right</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              /* Mobile-friendly meeting cards instead of table */
+              <div className="divide-y divide-slate-100">
+                {recentMeetings.map((meeting) => (
+                  <div 
+                    key={meeting.id} 
+                    className="p-4 hover:bg-slate-50 transition cursor-pointer flex items-center gap-3" 
+                    onClick={() => navigate(`/meetings/${meeting.id}`)}
+                  >
+                    <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0">
+                      <span className="material-icons text-slate-400 text-lg">
+                        {getFileTypeIcon(meeting.fileType)}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-900 truncate text-sm sm:text-base">{meeting.title}</p>
+                      <p className="text-slate-500 text-xs sm:text-sm">{meeting.date}</p>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${getStatusBadgeClass(meeting.status)}`}>
+                      {meeting.status}
+                    </span>
+                    <span className="material-icons text-slate-300 hidden sm:block">chevron_right</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
 
         {/* Quick Actions */}
-        <div className="space-y-6">
-          <h2 className="text-lg font-bold text-slate-900">Quick Actions</h2>
-          <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-2xl p-6 text-white shadow-xl">
-            <h3 className="font-bold mb-2">Create Tasks</h3>
-            <p className="text-indigo-100 text-sm leading-relaxed mb-4">
+        <div className="space-y-4 sm:space-y-6">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">Quick Actions</h2>
+          <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl sm:rounded-2xl p-5 sm:p-6 text-white shadow-xl">
+            <h3 className="font-bold mb-2 text-sm sm:text-base">Create Tasks</h3>
+            <p className="text-indigo-100 text-xs sm:text-sm leading-relaxed mb-4">
               After processing a meeting, create and assign tasks to your team members.
             </p>
             <Link 
@@ -225,20 +218,20 @@ const ManagerDashboard: React.FC = () => {
             <h3 className="font-bold mb-4">Workflow</h3>
             <ol className="space-y-3 text-sm text-slate-600">
               <li className="flex items-start gap-2">
-                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                <span>Upload meeting recording</span>
+                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                <span className="text-xs sm:text-sm">Upload meeting recording</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                <span>Map speakers to employees</span>
+                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                <span className="text-xs sm:text-sm">Map speakers to employees</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                <span>Create and assign tasks</span>
+                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                <span className="text-xs sm:text-sm">Create and assign tasks</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                <span>Employees complete work</span>
+                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold shrink-0">4</span>
+                <span className="text-xs sm:text-sm">Employees complete work</span>
               </li>
             </ol>
           </div>
@@ -297,17 +290,17 @@ const EmployeeDashboard: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
           Welcome back, {displayName.split(' ')[0]}!
         </h1>
-        <p className="text-slate-500">Here's your task overview.</p>
+        <p className="text-sm sm:text-base text-slate-500">Here's your task overview.</p>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         <StatCard 
           title="Total Tasks" 
           value={stats.total} 
@@ -339,28 +332,33 @@ const EmployeeDashboard: React.FC = () => {
       </div>
 
       {/* Tasks Section */}
-      <div className="grid lg:grid-cols-3 gap-8">
+      <div className="grid lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Pending Tasks */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">Pending Tasks</h2>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">Pending Tasks</h2>
             <Link to="/tasks" className="text-sm font-bold text-indigo-600 hover:underline">View All</Link>
           </div>
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden">
             {loading ? (
-              <div className="p-6 space-y-4">
+              <div className="p-4 sm:p-6 space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-center space-x-4">
-                    <div className="h-4 bg-slate-100 rounded w-1/3 animate-pulse"></div>
-                    <div className="h-4 bg-slate-100 rounded w-1/4 animate-pulse"></div>
+                  <div key={i} className="flex items-center gap-3 sm:gap-4">
+                    <div className="h-10 w-10 bg-slate-100 rounded-lg animate-pulse shrink-0"></div>
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 bg-slate-100 rounded w-3/4 animate-pulse"></div>
+                      <div className="h-3 bg-slate-100 rounded w-1/2 animate-pulse"></div>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : pendingTasks.length === 0 ? (
-              <div className="p-12 text-center">
-                <span className="material-icons text-slate-300 text-5xl mb-4">task_alt</span>
-                <h3 className="font-bold text-slate-900 mb-2">All caught up!</h3>
-                <p className="text-slate-500">You don't have any pending tasks.</p>
+              <div className="p-8 sm:p-12 text-center">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <span className="material-icons text-emerald-500 text-3xl sm:text-4xl">task_alt</span>
+                </div>
+                <h3 className="font-bold text-slate-900 mb-2 text-sm sm:text-base">All caught up!</h3>
+                <p className="text-slate-500 text-sm">You don't have any pending tasks.</p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
@@ -368,13 +366,13 @@ const EmployeeDashboard: React.FC = () => {
                   <Link 
                     key={task.id}
                     to="/tasks"
-                    className="flex items-center justify-between p-4 hover:bg-slate-50 transition"
+                    className="flex items-center justify-between p-4 hover:bg-slate-50 transition gap-3"
                   >
-                    <div>
-                      <p className="font-semibold text-slate-900">{task.title}</p>
-                      <p className="text-sm text-slate-500">From: {task.creatorName || 'Manager'}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-900 truncate text-sm sm:text-base">{task.title}</p>
+                      <p className="text-xs sm:text-sm text-slate-500">From: {task.creatorName || 'Manager'}</p>
                     </div>
-                    <span className={`px-2 py-1 rounded text-xs font-bold ${priorityColors[task.priority] || priorityColors.medium}`}>
+                    <span className={`px-2 py-1 rounded text-xs font-bold whitespace-nowrap ${priorityColors[task.priority] || priorityColors.medium}`}>
                       {task.priority}
                     </span>
                   </Link>
@@ -385,30 +383,30 @@ const EmployeeDashboard: React.FC = () => {
         </div>
 
         {/* Info Card */}
-        <div className="space-y-6">
-          <h2 className="text-lg font-bold text-slate-900">Your Progress</h2>
-          <div className="bg-white p-6 rounded-2xl border border-slate-200">
+        <div className="space-y-4 sm:space-y-6">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">Your Progress</h2>
+          <div className="bg-white p-5 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200">
             <div className="space-y-4">
               <div>
-                <div className="flex justify-between text-sm mb-1">
+                <div className="flex justify-between text-sm mb-2">
                   <span className="font-medium text-slate-700">Completion Rate</span>
                   <span className="font-bold text-emerald-600">
                     {stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0}%
                   </span>
                 </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="w-full h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden">
                   <div 
-                    className="bg-emerald-500 h-full transition-all duration-500"
+                    className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-full transition-all duration-500"
                     style={{ width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%` }}
                   ></div>
                 </div>
               </div>
             </div>
           </div>
-          <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-2xl p-6 text-white shadow-xl">
-            <h3 className="font-bold mb-2">Need Help?</h3>
-            <p className="text-indigo-100 text-sm leading-relaxed">
-              Click on any task to view details and submit your work. You can upload files or write a response.
+          <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl sm:rounded-2xl p-5 sm:p-6 text-white shadow-xl">
+            <h3 className="font-bold mb-2 text-sm sm:text-base">Need Help?</h3>
+            <p className="text-indigo-100 text-xs sm:text-sm leading-relaxed">
+              Click on any task to view details and submit your work via Google Drive link.
             </p>
           </div>
         </div>

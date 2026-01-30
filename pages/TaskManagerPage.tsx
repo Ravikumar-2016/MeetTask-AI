@@ -80,18 +80,18 @@ const isRecentSubmission = (submittedAt: Timestamp | string | null | undefined):
 
 // Task Card Skeleton
 const TaskCardSkeleton: React.FC = () => (
-  <div className="bg-white rounded-xl border border-slate-200 p-4 animate-pulse">
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1 space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="h-5 w-16 bg-slate-200 rounded"></div>
-          <div className="h-5 w-48 bg-slate-200 rounded"></div>
-          <div className="h-5 w-16 bg-slate-100 rounded"></div>
+  <div className="bg-white rounded-xl border border-slate-200 p-3 sm:p-4 animate-pulse">
+    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
+      <div className="flex-1 space-y-2 sm:space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="h-4 sm:h-5 w-12 sm:w-16 bg-slate-200 rounded"></div>
+          <div className="h-4 sm:h-5 w-32 sm:w-48 bg-slate-200 rounded"></div>
+          <div className="h-4 sm:h-5 w-12 sm:w-16 bg-slate-100 rounded"></div>
         </div>
-        <div className="h-4 w-64 bg-slate-100 rounded"></div>
-        <div className="h-4 w-full bg-slate-50 rounded"></div>
+        <div className="h-3 sm:h-4 w-48 sm:w-64 bg-slate-100 rounded"></div>
+        <div className="h-3 sm:h-4 w-full bg-slate-50 rounded"></div>
       </div>
-      <div className="space-y-2 text-right">
+      <div className="space-y-2 text-right hidden sm:block">
         <div className="h-3 w-12 bg-slate-100 rounded"></div>
         <div className="h-4 w-20 bg-slate-200 rounded"></div>
       </div>
@@ -399,23 +399,23 @@ const TaskManagerPage: React.FC = () => {
   // Loading state with skeletons
   if (authLoading || loading) {
     return (
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Task Manager</h1>
-            <p className="text-slate-500 mt-1">Create and manage tasks for your team</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Task Manager</h1>
+            <p className="text-sm sm:text-base text-slate-500 mt-1">Create and manage tasks for your team</p>
           </div>
-          <div className="h-10 w-32 bg-slate-200 rounded-xl animate-pulse"></div>
+          <div className="h-10 w-full sm:w-32 bg-slate-200 rounded-xl animate-pulse"></div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-4">
           {[1, 2, 3, 4].map(i => (
-            <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 animate-pulse">
-              <div className="h-8 w-12 bg-slate-200 rounded mb-2"></div>
-              <div className="h-4 w-16 bg-slate-100 rounded"></div>
+            <div key={i} className="bg-white p-3 sm:p-4 rounded-xl sm:rounded-xl border border-slate-200 animate-pulse">
+              <div className="h-6 sm:h-8 w-8 sm:w-12 bg-slate-200 rounded mb-1.5 sm:mb-2"></div>
+              <div className="h-3 sm:h-4 w-12 sm:w-16 bg-slate-100 rounded"></div>
             </div>
           ))}
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2 sm:space-y-3">
           {[1, 2, 3].map(i => (
             <TaskCardSkeleton key={i} />
           ))}
@@ -432,17 +432,17 @@ const TaskManagerPage: React.FC = () => {
   return (
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         
         {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Task Manager</h1>
-          <p className="text-slate-500 mt-1">Create and manage tasks for your team</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Task Manager</h1>
+          <p className="text-sm sm:text-base text-slate-500 mt-1">Create and manage tasks for your team</p>
         </div>
         <button
           onClick={() => setShowCreateForm(true)}
-          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md shadow-indigo-200 transition"
+          className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md shadow-indigo-200 transition w-full sm:w-auto"
         >
           <span className="material-icons text-sm">add</span>
           Create Task
@@ -450,114 +450,116 @@ const TaskManagerPage: React.FC = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
+        <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-2xl font-bold text-slate-800">{tasks.length}</p>
-              <p className="text-sm text-slate-500 font-medium">Total Tasks</p>
+              <p className="text-xl sm:text-2xl font-bold text-slate-800">{tasks.length}</p>
+              <p className="text-xs sm:text-sm text-slate-500 font-medium">Total Tasks</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-slate-200/60 flex items-center justify-center">
-              <span className="material-icons text-slate-600">list_alt</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-slate-200/60 flex items-center justify-center">
+              <span className="material-icons text-slate-600 text-lg sm:text-xl">list_alt</span>
             </div>
           </div>
         </div>
-        <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-4 rounded-2xl border border-amber-100 shadow-sm shadow-amber-100/50 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-amber-100 shadow-sm shadow-amber-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-2xl font-bold text-amber-700">{tasks.filter(t => t.status === 'pending').length}</p>
-              <p className="text-sm text-amber-600/80 font-medium">Pending</p>
+              <p className="text-xl sm:text-2xl font-bold text-amber-700">{tasks.filter(t => t.status === 'pending').length}</p>
+              <p className="text-xs sm:text-sm text-amber-600/80 font-medium">Pending</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-              <span className="material-icons text-amber-600">pending_actions</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-100 flex items-center justify-center">
+              <span className="material-icons text-amber-600 text-lg sm:text-xl">pending_actions</span>
             </div>
           </div>
         </div>
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-100 shadow-sm shadow-blue-100/50 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-blue-100 shadow-sm shadow-blue-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-2xl font-bold text-blue-700">{tasks.filter(t => t.status === 'in_progress').length}</p>
-              <p className="text-sm text-blue-600/80 font-medium">In Progress</p>
+              <p className="text-xl sm:text-2xl font-bold text-blue-700">{tasks.filter(t => t.status === 'in_progress').length}</p>
+              <p className="text-xs sm:text-sm text-blue-600/80 font-medium">In Progress</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
-              <span className="material-icons text-blue-600">autorenew</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-100 flex items-center justify-center">
+              <span className="material-icons text-blue-600 text-lg sm:text-xl">autorenew</span>
             </div>
           </div>
         </div>
-        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-4 rounded-2xl border border-emerald-100 shadow-sm shadow-emerald-100/50 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-sm shadow-emerald-100/50 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-2xl font-bold text-emerald-700">{tasks.filter(t => t.status === 'completed').length}</p>
-              <p className="text-sm text-emerald-600/80 font-medium">Completed</p>
+              <p className="text-xl sm:text-2xl font-bold text-emerald-700">{tasks.filter(t => t.status === 'completed').length}</p>
+              <p className="text-xs sm:text-sm text-emerald-600/80 font-medium">Completed</p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-              <span className="material-icons text-emerald-600">task_alt</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-100 flex items-center justify-center">
+              <span className="material-icons text-emerald-600 text-lg sm:text-xl">task_alt</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-3">
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <span className="material-icons text-slate-400 text-lg">filter_list</span>
           <span className="font-medium">Filters:</span>
         </div>
-        <select
-          value={filterMeeting}
-          onChange={(e) => setFilterMeeting(e.target.value)}
-          className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
-        >
-          <option value="all">All Meetings</option>
-          {meetings.map((m) => (
-            <option key={m.id} value={m.id}>{m.title}</option>
-          ))}
-        </select>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
-        >
-          <option value="all">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-          <option value="blocked">Blocked</option>
-        </select>
+        <div className="flex gap-2 flex-1 sm:flex-initial">
+          <select
+            value={filterMeeting}
+            onChange={(e) => setFilterMeeting(e.target.value)}
+            className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl text-xs sm:text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
+          >
+            <option value="all">All Meetings</option>
+            {meetings.map((m) => (
+              <option key={m.id} value={m.id}>{m.title}</option>
+            ))}
+          </select>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl text-xs sm:text-sm bg-white shadow-sm hover:border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition cursor-pointer"
+          >
+            <option value="all">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </div>
       </div>
 
       {/* Create Task Modal */}
       {showCreateForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-slate-100">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-4 sm:p-6 border-b border-slate-100">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900">Create New Task</h2>
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900">Create New Task</h2>
                 <button
                   onClick={() => setShowCreateForm(false)}
-                  className="p-2 hover:bg-slate-100 rounded-lg transition"
+                  className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg transition"
                 >
-                  <span className="material-icons">close</span>
+                  <span className="material-icons text-lg sm:text-xl">close</span>
                 </button>
               </div>
             </div>
 
-            <form onSubmit={handleCreateTask} className="p-6 space-y-4">
+            <form onSubmit={handleCreateTask} className="p-4 sm:p-6 space-y-3 sm:space-y-4">
               {createError && (
-                <div className="p-3 bg-red-50 border border-red-100 rounded-lg">
-                  <p className="text-sm text-red-700">{createError}</p>
+                <div className="p-2.5 sm:p-3 bg-red-50 border border-red-100 rounded-lg">
+                  <p className="text-xs sm:text-sm text-red-700">{createError}</p>
                 </div>
               )}
 
               {/* Meeting Selection */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Meeting *
                 </label>
                 <select
                   value={selectedMeetingId}
                   onChange={(e) => setSelectedMeetingId(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-3 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   required
                 >
                   <option value="">Select a meeting...</option>
@@ -566,7 +568,7 @@ const TaskManagerPage: React.FC = () => {
                   ))}
                 </select>
                 {meetings.length === 0 && (
-                  <p className="mt-1 text-xs text-amber-600">
+                  <p className="mt-1 text-[10px] sm:text-xs text-amber-600">
                     No completed meetings yet. <Link to="/upload" className="underline">Upload a meeting</Link> first.
                   </p>
                 )}
@@ -574,14 +576,14 @@ const TaskManagerPage: React.FC = () => {
 
               {/* Task Title */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Task Title *
                 </label>
                 <input
                   type="text"
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-3 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   placeholder="e.g., Prepare quarterly report"
                   required
                 />
@@ -589,27 +591,27 @@ const TaskManagerPage: React.FC = () => {
 
               {/* Task Description */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Description
                 </label>
                 <textarea
                   value={taskDescription}
                   onChange={(e) => setTaskDescription(e.target.value)}
-                  rows={3}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+                  rows={2}
+                  className="w-full px-3 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
                   placeholder="Describe what needs to be done..."
                 />
               </div>
 
               {/* Assign To */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Assign To *
                 </label>
                 <select
                   value={assignedEmployee}
                   onChange={(e) => setAssignedEmployee(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-3 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   required
                 >
                   <option value="">Select an employee...</option>
@@ -620,25 +622,25 @@ const TaskManagerPage: React.FC = () => {
                   ))}
                 </select>
                 {employees.length === 0 && (
-                  <p className="mt-1 text-xs text-amber-600">
+                  <p className="mt-1 text-[10px] sm:text-xs text-amber-600">
                     No employees found. Employees need to sign up first.
                   </p>
                 )}
               </div>
 
               {/* File Upload Requirement */}
-              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                <label className="flex items-start gap-3 cursor-pointer">
+              <div className="p-3 sm:p-4 bg-blue-50 border border-blue-100 rounded-lg sm:rounded-xl">
+                <label className="flex items-start gap-2 sm:gap-3 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={requiresFile}
                     onChange={(e) => setRequiresFile(e.target.checked)}
-                    className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                    className="mt-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
                   />
                   <div>
-                    <p className="font-medium text-slate-700 text-sm">Require file upload</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Text response is always required. Check this if employee should also upload a file (PDF, ZIP, images, etc.)
+                    <p className="font-medium text-slate-700 text-xs sm:text-sm">Require file upload</p>
+                    <p className="text-[10px] sm:text-xs text-slate-500 mt-0.5">
+                      Text response is always required. Check this if employee should also upload a file.
                     </p>
                   </div>
                 </label>
@@ -646,16 +648,16 @@ const TaskManagerPage: React.FC = () => {
 
               {/* Priority */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Priority
                 </label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                   {(['low', 'medium', 'high', 'critical'] as const).map((p) => (
                     <button
                       key={p}
                       type="button"
                       onClick={() => setPriority(p)}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium capitalize transition ${
+                      className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-sm font-medium capitalize transition ${
                         priority === p
                           ? priorityColors[p]
                           : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -669,28 +671,28 @@ const TaskManagerPage: React.FC = () => {
 
               {/* Due Date */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
+                <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1">
                   Due Date (optional)
                 </label>
                 <input
                   type="date"
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-3 py-2 sm:py-2.5 border border-slate-200 rounded-lg sm:rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
 
               {/* Submit Button */}
-              <div className="pt-4">
+              <div className="pt-2 sm:pt-4">
                 <button
                   type="submit"
                   disabled={creating || !selectedMeetingId || !taskTitle.trim() || !assignedEmployee}
-                  className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition flex items-center justify-center gap-2"
+                  className="w-full px-4 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg sm:rounded-xl transition flex items-center justify-center gap-2"
                 >
                   {creating ? (
                     <>
                       <span className="animate-spin">⏳</span>
-                      Creating Task...
+                      Creating...
                     </>
                   ) : (
                     <>
@@ -707,137 +709,138 @@ const TaskManagerPage: React.FC = () => {
 
       {/* Tasks List */}
       {filteredTasks.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-          <span className="material-icons text-5xl text-slate-300 mb-4">task_alt</span>
-          <h3 className="text-lg font-semibold text-slate-700 mb-2">No tasks yet</h3>
-          <p className="text-slate-500 mb-4">
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 p-6 sm:p-12 text-center">
+          <span className="material-icons text-4xl sm:text-5xl text-slate-300 mb-3 sm:mb-4">task_alt</span>
+          <h3 className="text-base sm:text-lg font-semibold text-slate-700 mb-2">No tasks yet</h3>
+          <p className="text-sm sm:text-base text-slate-500 mb-4">
             Create your first task to start managing your team's work.
           </p>
           <button
             onClick={() => setShowCreateForm(true)}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition"
+            className="px-4 sm:px-5 py-2 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition"
           >
             Create Task
           </button>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3 sm:space-y-4">
           {filteredTasks.map((task, index) => (
             <div
               key={task.id}
-              className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm hover:shadow-lg hover:border-slate-300/80 transition-all duration-300 animate-fadeIn"
+              className="bg-white rounded-xl sm:rounded-2xl border border-slate-200/80 p-3 sm:p-5 shadow-sm hover:shadow-lg hover:border-slate-300/80 transition-all duration-300 animate-fadeIn"
               style={{ animationDelay: `${index * 50}ms` }}
             >
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="text-xs font-mono bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg">{task.taskId}</span>
-                    <h3 className="font-bold text-slate-800 text-lg">{task.title}</h3>
-                    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize ${priorityColors[task.priority]}`}>
+                  <div className="flex items-center gap-1.5 sm:gap-2 mb-2 flex-wrap">
+                    <span className="text-[10px] sm:text-xs font-mono bg-slate-100 text-slate-500 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg">{task.taskId}</span>
+                    <h3 className="font-bold text-slate-800 text-sm sm:text-lg">{task.title}</h3>
+                    <span className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-semibold capitalize ${priorityColors[task.priority]}`}>
                       {task.priority}
                     </span>
-                    <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${statusColors[task.status]}`}>
+                    <span className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-semibold ${statusColors[task.status]}`}>
                       {statusLabels[task.status]}
                     </span>
                     {task.submissionText && isRecentSubmission(task.submittedAt) && (
-                      <span className="px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[10px] font-bold rounded-full animate-pulse shadow-sm">
-                        NEW SUBMISSION
+                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-[9px] sm:text-[10px] font-bold rounded-full animate-pulse shadow-sm">
+                        NEW
                       </span>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 mb-3">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-slate-500 mb-2 sm:mb-3">
                     <span className="inline-flex items-center gap-1">
-                      <span className="material-icons text-slate-400 text-sm">videocam</span>
-                      {task.meetingTitle}
+                      <span className="material-icons text-slate-400 text-xs sm:text-sm">videocam</span>
+                      <span className="truncate max-w-[100px] sm:max-w-none">{task.meetingTitle}</span>
                     </span>
-                    <span className="text-slate-300">•</span>
+                    <span className="text-slate-300 hidden sm:inline">•</span>
                     <span className="inline-flex items-center gap-1">
-                      <span className="material-icons text-slate-400 text-sm">person</span>
+                      <span className="material-icons text-slate-400 text-xs sm:text-sm">person</span>
                       <span className="font-medium text-slate-600">{task.assignedToName}</span>
                     </span>
                     {task.requiresFile && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md text-xs font-medium">
-                        <span className="material-icons text-[12px]">attach_file</span>
-                        File required
+                      <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] sm:text-xs font-medium">
+                        <span className="material-icons text-[10px] sm:text-[12px]">attach_file</span>
+                        <span className="hidden sm:inline">File required</span>
+                        <span className="sm:hidden">File</span>
                       </span>
                     )}
                   </div>
                   {task.description && (
-                    <p className="text-sm text-slate-600 line-clamp-2">{task.description}</p>
+                    <p className="text-xs sm:text-sm text-slate-600 line-clamp-2">{task.description}</p>
                   )}
                   
                   {/* Enhanced submission display */}
                   {task.submissionText && (
-                    <div className={`mt-4 p-5 rounded-2xl border-2 transition-all ${
+                    <div className={`mt-3 sm:mt-4 p-3 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all ${
                       isRecentSubmission(task.submittedAt) 
                         ? 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200 shadow-sm shadow-emerald-100' 
                         : 'bg-gradient-to-br from-slate-50 to-slate-100/50 border-slate-200'
                     }`}>
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center justify-between mb-2 sm:mb-3">
                         <div className="flex items-center gap-2">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                          <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-md sm:rounded-lg flex items-center justify-center ${
                             isRecentSubmission(task.submittedAt) ? 'bg-emerald-100' : 'bg-slate-200'
                           }`}>
-                            <span className={`material-icons text-lg ${isRecentSubmission(task.submittedAt) ? 'text-emerald-600' : 'text-slate-500'}`}>
+                            <span className={`material-icons text-sm sm:text-lg ${isRecentSubmission(task.submittedAt) ? 'text-emerald-600' : 'text-slate-500'}`}>
                               assignment_turned_in
                             </span>
                           </div>
-                          <span className={`text-sm font-bold ${isRecentSubmission(task.submittedAt) ? 'text-emerald-700' : 'text-slate-600'}`}>
+                          <span className={`text-xs sm:text-sm font-bold ${isRecentSubmission(task.submittedAt) ? 'text-emerald-700' : 'text-slate-600'}`}>
                             Employee Submission
                           </span>
                         </div>
                         {task.submittedAt && (
-                          <span className="text-xs text-slate-400 bg-white/60 px-2 py-1 rounded-md">
+                          <span className="text-[10px] sm:text-xs text-slate-400 bg-white/60 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded">
                             {formatDate(task.submittedAt)}
                           </span>
                         )}
                       </div>
-                      <p className={`text-sm leading-relaxed ${isRecentSubmission(task.submittedAt) ? 'text-emerald-800' : 'text-slate-700'}`}>
+                      <p className={`text-xs sm:text-sm leading-relaxed ${isRecentSubmission(task.submittedAt) ? 'text-emerald-800' : 'text-slate-700'}`}>
                         {task.submissionText}
                       </p>
                       
                       {/* Enhanced file attachment display */}
                       {task.submissionFileUrl && (
-                        <div className="mt-4 p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                        <div className="mt-3 sm:mt-4 p-3 sm:p-4 bg-white rounded-lg sm:rounded-xl border border-slate-200 shadow-sm">
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <div className={`w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl flex items-center justify-center ${
                               isRecentSubmission(task.submittedAt) ? 'bg-gradient-to-br from-emerald-100 to-green-100' : 'bg-gradient-to-br from-blue-100 to-indigo-100'
                             }`}>
-                              <span className={`material-icons text-xl ${
+                              <span className={`material-icons text-lg sm:text-xl ${
                                 isRecentSubmission(task.submittedAt) ? 'text-emerald-600' : 'text-blue-600'
                               }`}>
                                 {getDriveFileIcon(task.submissionFileUrl)}
                               </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-slate-800 truncate">
+                              <p className="text-xs sm:text-sm font-semibold text-slate-800 truncate">
                                 {task.submissionFileName || getDriveFileType(task.submissionFileUrl)}
                               </p>
-                              <p className="text-xs text-slate-500 flex items-center gap-1">
-                                <span className="material-icons text-[14px]">cloud</span>
+                              <p className="text-[10px] sm:text-xs text-slate-500 flex items-center gap-1">
+                                <span className="material-icons text-[12px] sm:text-[14px]">cloud</span>
                                 Google Drive
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 sm:gap-2">
                               <a
                                 href={task.submissionFileUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow-md transition-all"
+                                className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs sm:text-sm font-semibold rounded-lg sm:rounded-xl shadow-sm hover:shadow-md transition-all"
                                 title="Open in Google Drive"
                               >
-                                <span className="material-icons text-sm">open_in_new</span>
-                                View File
+                                <span className="material-icons text-xs sm:text-sm">open_in_new</span>
+                                <span className="hidden sm:inline">View</span>
                               </a>
                               <button
                                 onClick={() => {
                                   navigator.clipboard.writeText(task.submissionFileUrl!);
                                   success('Link copied to clipboard!');
                                 }}
-                                className="inline-flex items-center justify-center w-10 h-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
+                                className="inline-flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg sm:rounded-xl transition"
                                 title="Copy link"
                               >
-                                <span className="material-icons text-lg">content_copy</span>
+                                <span className="material-icons text-sm sm:text-lg">content_copy</span>
                               </button>
                             </div>
                           </div>
@@ -846,15 +849,15 @@ const TaskManagerPage: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="text-right shrink-0 space-y-2">
-                  <div className="px-3 py-2 bg-slate-50 rounded-xl">
-                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Created</p>
-                    <p className="text-sm text-slate-600 font-medium">{formatDate(task.createdAt)}</p>
+                <div className="flex sm:flex-col gap-2 sm:space-y-2 shrink-0">
+                  <div className="px-2 sm:px-3 py-1.5 sm:py-2 bg-slate-50 rounded-lg sm:rounded-xl">
+                    <p className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-wider font-medium">Created</p>
+                    <p className="text-xs sm:text-sm text-slate-600 font-medium">{formatDate(task.createdAt)}</p>
                   </div>
                   {task.dueDate && (
-                    <div className="px-3 py-2 bg-amber-50 rounded-xl">
-                      <p className="text-[10px] text-amber-500 uppercase tracking-wider font-medium">Due Date</p>
-                      <p className="text-sm text-amber-700 font-medium">{formatDate(task.dueDate)}</p>
+                    <div className="px-2 sm:px-3 py-1.5 sm:py-2 bg-amber-50 rounded-lg sm:rounded-xl">
+                      <p className="text-[9px] sm:text-[10px] text-amber-500 uppercase tracking-wider font-medium">Due</p>
+                      <p className="text-xs sm:text-sm text-amber-700 font-medium">{formatDate(task.dueDate)}</p>
                     </div>
                   )}
                 </div>

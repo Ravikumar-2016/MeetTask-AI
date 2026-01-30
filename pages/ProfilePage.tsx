@@ -167,76 +167,76 @@ const ProfilePage: React.FC = () => {
       )}
       
       <div className="max-w-4xl mx-auto py-8">
-        <div className="mb-8 animate-fadeIn">
-          <h1 className="text-2xl font-bold text-slate-900">Your Profile</h1>
-          <p className="text-slate-500">Manage your account settings and preferences.</p>
+        <div className="mb-6 sm:mb-8 animate-fadeIn">
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Your Profile</h1>
+          <p className="text-sm sm:text-base text-slate-500">Manage your account settings and preferences.</p>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Profile Card */}
-          <div className="bg-white p-8 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '50ms' }}>
-            <div className="flex flex-col md:flex-row items-center space-y-4 md:space-y-0 md:space-x-8">
+          <div className="bg-white p-4 sm:p-8 rounded-xl sm:rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '50ms' }}>
+            <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8">
               <div className="relative group">
                 <img
                   src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.displayName || 'User'}&background=6366f1&color=fff&bold=true`}
-                  className="w-24 h-24 rounded-full border-4 border-white shadow-lg ring-2 ring-slate-100"
+                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-full border-4 border-white shadow-lg ring-2 ring-slate-100"
                   alt="Profile"
                 />
                 <button 
-                  className="absolute bottom-0 right-0 bg-indigo-600 text-white p-2 rounded-full shadow-lg hover:bg-indigo-700 hover:scale-110 transition-all"
+                  className="absolute bottom-0 right-0 bg-indigo-600 text-white p-1.5 sm:p-2 rounded-full shadow-lg hover:bg-indigo-700 hover:scale-110 transition-all"
                   title="Change photo (coming soon)"
                 >
-                  <span className="material-icons text-sm">photo_camera</span>
+                  <span className="material-icons text-xs sm:text-sm">photo_camera</span>
                 </button>
               </div>
-              <div className="flex-1 text-center md:text-left">
-                <h2 className="text-2xl font-bold text-slate-900">{user?.displayName || 'User'}</h2>
-                <p className="text-slate-500 font-medium">{user?.email}</p>
-                <div className="mt-4 flex flex-wrap justify-center md:justify-start gap-2">
-                  <span className="px-3 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600 rounded-full text-xs font-bold uppercase border border-indigo-100">
-                    Pro Plan
+              <div className="flex-1 text-center sm:text-left">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900">{user?.displayName || 'User'}</h2>
+                <p className="text-slate-500 font-medium text-sm sm:text-base break-all">{user?.email}</p>
+                <div className="mt-3 sm:mt-4 flex flex-wrap justify-center sm:justify-start gap-2">
+                  <span className="px-2.5 sm:px-3 py-1 sm:py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600 rounded-full text-[10px] sm:text-xs font-bold uppercase border border-indigo-100">
+                    {user?.role === 'manager' ? 'Manager' : 'Employee'}
                   </span>
-                  <span className="px-3 py-1.5 bg-slate-50 text-slate-600 rounded-full text-xs font-bold uppercase border border-slate-200">
-                    Beta Tester
+                  <span className="px-2.5 sm:px-3 py-1 sm:py-1.5 bg-slate-50 text-slate-600 rounded-full text-[10px] sm:text-xs font-bold uppercase border border-slate-200">
+                    Active
                   </span>
                 </div>
               </div>
               <button
                 onClick={handleLogoutClick}
-                className="px-6 py-2.5 bg-rose-50 text-rose-600 font-bold rounded-xl hover:bg-rose-100 hover:shadow-md transition-all border border-rose-100"
+                className="w-full sm:w-auto px-6 py-2.5 bg-rose-50 text-rose-600 font-bold rounded-xl hover:bg-rose-100 hover:shadow-md transition-all border border-rose-100 flex items-center justify-center gap-2"
               >
-                Logout
+                <span className="material-icons text-sm">logout</span>
+                <span>Logout</span>
               </button>
             </div>
           </div>
 
           {/* Settings Groups */}
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid sm:grid-cols-2 gap-4 sm:gap-6">
             {/* Notifications */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '100ms' }}>
-              <h3 className="font-bold text-lg mb-5 flex items-center text-slate-800">
-                <span className="material-icons text-indigo-600 mr-2">notifications</span> 
+            <div className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '100ms' }}>
+              <h3 className="font-bold text-base sm:text-lg mb-4 sm:mb-5 flex items-center text-slate-800">
+                <span className="material-icons text-indigo-600 mr-2 text-lg sm:text-xl">notifications</span> 
                 Notifications
               </h3>
-              <div className="space-y-5">
+              <div className="space-y-4 sm:space-y-5">
                 {[
                   { label: 'Email Recap', sub: 'Receive summary after every meeting', checked: true },
                   { label: 'Task Reminders', sub: 'Get notified of upcoming deadlines', checked: true },
                   { label: 'Mentions', sub: 'Alert when your name is mentioned', checked: false }
                 ].map((s, i) => (
-                  <div key={i} className="flex items-center justify-between group">
-                    <div>
+                  <div key={i} className="flex items-center justify-between group gap-3">
+                    <div className="min-w-0 flex-1">
                       <p className="font-semibold text-slate-800 text-sm">{s.label}</p>
-                      <p className="text-xs text-slate-500">{s.sub}</p>
+                      <p className="text-xs text-slate-500 truncate">{s.sub}</p>
                     </div>
-                    <div className="relative">
+                    <div className="relative shrink-0">
                       <div 
-                        className={`w-11 h-6 rounded-full relative transition cursor-not-allowed ${s.checked ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                        className={`w-10 sm:w-11 h-5 sm:h-6 rounded-full relative transition cursor-not-allowed ${s.checked ? 'bg-indigo-600' : 'bg-slate-200'}`}
                         title="Coming soon"
                       >
-                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all ${s.checked ? 'left-6' : 'left-1'}`}></div>
+                        <div className={`absolute top-0.5 sm:top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all ${s.checked ? 'left-5 sm:left-6' : 'left-0.5 sm:left-1'}`}></div>
                       </div>
-                      <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full opacity-0 group-hover:opacity-100 transition" title="Coming soon"></span>
                     </div>
                   </div>
                 ))}
@@ -247,12 +247,12 @@ const ProfilePage: React.FC = () => {
             </div>
 
             {/* General Settings */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '150ms' }}>
-              <h3 className="font-bold text-lg mb-5 flex items-center text-slate-800">
-                <span className="material-icons text-indigo-600 mr-2">settings</span> 
+            <div className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-300 animate-fadeIn" style={{ animationDelay: '150ms' }}>
+              <h3 className="font-bold text-base sm:text-lg mb-4 sm:mb-5 flex items-center text-slate-800">
+                <span className="material-icons text-indigo-600 mr-2 text-lg sm:text-xl">settings</span> 
                 General
               </h3>
-              <div className="space-y-5">
+              <div className="space-y-4 sm:space-y-5">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                     Default Transcription Language
@@ -288,11 +288,11 @@ const ProfilePage: React.FC = () => {
           </div>
 
           {/* Save Changes Button */}
-          <div className={`flex justify-end transition-all duration-300 ${hasChanges ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
+          <div className={`flex justify-center sm:justify-end transition-all duration-300 ${hasChanges ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
             <button
               onClick={handleSaveChanges}
               disabled={saving || !hasChanges}
-              className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <>
@@ -310,23 +310,7 @@ const ProfilePage: React.FC = () => {
         </div>
       </div>
 
-      {/* CSS Animations */}
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes scaleIn {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.4s ease-out forwards;
-        }
-        .animate-scaleIn {
-          animation: scaleIn 0.2s ease-out forwards;
-        }
-      `}</style>
+      {/* CSS Animations - moved to global index.css */}
     </>
   );
 };

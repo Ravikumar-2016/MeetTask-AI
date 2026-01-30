@@ -255,26 +255,26 @@ const UploadPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900">Upload Meeting</h1>
-        <p className="text-slate-500">Upload your recording to start the AI analysis.</p>
+    <div className="max-w-3xl mx-auto py-4 sm:py-8">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Upload Meeting</h1>
+        <p className="text-sm sm:text-base text-slate-500">Upload your recording to start the AI analysis.</p>
       </div>
 
-      <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="bg-white p-4 sm:p-8 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
         {success ? (
-          <div className="text-center py-10 space-y-4">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <span className="material-icons text-emerald-600 text-4xl">check_circle</span>
+          <div className="text-center py-8 sm:py-10 space-y-4">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6">
+              <span className="material-icons text-emerald-600 text-3xl sm:text-4xl">check_circle</span>
             </div>
-            <h2 className="text-2xl font-bold text-slate-900">Upload Complete!</h2>
-            <p className="text-slate-600">Your meeting is being processed. You'll be redirected shortly.</p>
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900">Upload Complete!</h2>
+            <p className="text-sm sm:text-base text-slate-600">Your meeting is being processed. You'll be redirected shortly.</p>
           </div>
         ) : (
-          <form onSubmit={handleUpload} className="space-y-6">
+          <form onSubmit={handleUpload} className="space-y-5 sm:space-y-6">
             <div 
               onClick={triggerFileInput}
-              className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+              className={`border-2 border-dashed rounded-xl sm:rounded-2xl p-6 sm:p-12 text-center cursor-pointer transition-all ${
                 file ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
               }`}
             >
@@ -286,11 +286,13 @@ const UploadPage: React.FC = () => {
                 accept="audio/*,video/*"
               />
               <div className="space-y-2">
-                <span className="material-icons text-slate-400 text-5xl">cloud_upload</span>
-                <div className="text-lg font-bold text-slate-900">
-                  {file ? file.name : 'Click to upload or drag and drop'}
+                <div className="w-14 h-14 sm:w-16 sm:h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                  <span className="material-icons text-slate-400 text-3xl sm:text-4xl">cloud_upload</span>
                 </div>
-                <p className="text-sm text-slate-500">MP4, MOV, WebM, MP3, WAV, M4A (Max 500MB)</p>
+                <div className="text-base sm:text-lg font-bold text-slate-900 break-all px-2">
+                  {file ? file.name : 'Tap to upload file'}
+                </div>
+                <p className="text-xs sm:text-sm text-slate-500">MP4, MOV, WebM, MP3, WAV, M4A (Max 500MB)</p>
               </div>
             </div>
 
@@ -301,7 +303,7 @@ const UploadPage: React.FC = () => {
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-base"
                 placeholder="e.g. Project Apollo Kickoff"
               />
             </div>
@@ -309,30 +311,30 @@ const UploadPage: React.FC = () => {
             {uploading && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm font-bold text-slate-700">
-                  <span>{progressMessage || 'Processing...'}</span>
-                  <span>{Math.round(progress)}%</span>
+                  <span className="truncate mr-2">{progressMessage || 'Processing...'}</span>
+                  <span className="shrink-0">{Math.round(progress)}%</span>
                 </div>
-                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-600 transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                <div className="w-full h-2 sm:h-3 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-indigo-600 to-purple-600 transition-all duration-300" style={{ width: `${progress}%` }}></div>
                 </div>
               </div>
             )}
 
             {error && (
-              <p className="text-red-600 text-sm font-bold bg-red-50 p-4 rounded-xl border border-red-100">{error}</p>
+              <p className="text-red-600 text-sm font-bold bg-red-50 p-3 sm:p-4 rounded-xl border border-red-100">{error}</p>
             )}
 
-            <div className="flex justify-end pt-4">
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2 sm:pt-4">
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
-                className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-50 rounded-xl transition mr-4"
+                className="w-full sm:w-auto px-6 py-3 text-slate-600 font-bold hover:bg-slate-50 rounded-xl transition border border-slate-200 sm:border-0"
               >
                 Cancel
               </button>
               <button
                 disabled={!file || !title || uploading}
-                className="bg-indigo-600 text-white px-10 py-3 rounded-xl font-bold hover:bg-indigo-700 transition disabled:opacity-50 shadow-lg shadow-indigo-100"
+                className="w-full sm:w-auto bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-8 sm:px-10 py-3 rounded-xl font-bold hover:opacity-90 transition disabled:opacity-50 shadow-lg shadow-indigo-200"
               >
                 {uploading ? 'Processing...' : 'Process Meeting'}
               </button>
@@ -341,13 +343,13 @@ const UploadPage: React.FC = () => {
         )}
       </div>
 
-      <div className="mt-8 bg-blue-50 border border-blue-100 p-6 rounded-2xl flex items-start space-x-4">
-        <span className="material-icons text-blue-500">info</span>
+      <div className="mt-6 sm:mt-8 bg-blue-50 border border-blue-100 p-4 sm:p-6 rounded-xl sm:rounded-2xl flex items-start gap-3 sm:gap-4">
+        <span className="material-icons text-blue-500 shrink-0">info</span>
         <div>
-          <h4 className="font-bold text-blue-900">How long does it take?</h4>
-          <p className="text-sm text-blue-700 leading-relaxed">
+          <h4 className="font-bold text-blue-900 text-sm sm:text-base">How long does it take?</h4>
+          <p className="text-xs sm:text-sm text-blue-700 leading-relaxed mt-1">
             Our AI typically processes meetings in 1/5th of the recording length. 
-            A 60-minute meeting will take roughly 12 minutes to analyze. We'll email you when it's ready.
+            A 60-minute meeting will take roughly 12 minutes to analyze.
           </p>
         </div>
       </div>
