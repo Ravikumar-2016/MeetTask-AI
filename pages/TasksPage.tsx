@@ -5,12 +5,12 @@
  * Allows employees to:
  * - View assigned tasks
  * - Update task status
- * - Submit work (text response + optional file upload)
+ * - Submit work (text response + Google Drive link)
  * 
  * Managers should use TaskManagerPage instead.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   collection, 
@@ -21,18 +21,18 @@ import {
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  formatFileSize, 
-  getFileIcon,
-  canPreviewFile,
-  openFile
-} from '../lib/fileUpload';
+
+// ============================================
+// CONSTANTS
+// ============================================
+const GOOGLE_DRIVE_FOLDER = 'https://drive.google.com/drive/folders/13lIjU4zmd8rolBJd036UIiwUEDN253TY';
 
 // ============================================
 // TYPES
 // ============================================
 type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
 type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
+type SubmissionStep = 'idle' | 'validating' | 'saving' | 'attaching' | 'updating' | 'notifying' | 'complete' | 'error';
 
 interface Task {
   id: string;
@@ -89,6 +89,38 @@ const formatDate = (dateStr: string | Timestamp | undefined): string => {
   }
 };
 
+// Validate Google Drive link
+const isValidDriveLink = (url: string): boolean => {
+  if (!url.trim()) return false;
+  const drivePatterns = [
+    /drive\.google\.com\/file\/d\//,
+    /drive\.google\.com\/open\?id=/,
+    /docs\.google\.com\/document/,
+    /docs\.google\.com\/spreadsheets/,
+    /docs\.google\.com\/presentation/,
+    /drive\.google\.com\/drive\/folders\//,
+  ];
+  return drivePatterns.some(pattern => pattern.test(url));
+};
+
+// Get file type from Drive link
+const getDriveFileType = (url: string): string => {
+  if (url.includes('docs.google.com/document')) return 'Google Doc';
+  if (url.includes('docs.google.com/spreadsheets')) return 'Google Sheets';
+  if (url.includes('docs.google.com/presentation')) return 'Google Slides';
+  if (url.includes('drive.google.com/drive/folders')) return 'Google Drive Folder';
+  return 'Google Drive File';
+};
+
+// Get icon for file type
+const getDriveFileIcon = (url: string): string => {
+  if (url.includes('docs.google.com/document')) return 'description';
+  if (url.includes('docs.google.com/spreadsheets')) return 'table_chart';
+  if (url.includes('docs.google.com/presentation')) return 'slideshow';
+  if (url.includes('drive.google.com/drive/folders')) return 'folder';
+  return 'insert_drive_file';
+};
+
 const priorityOrder: Record<TaskPriority, number> = {
   critical: 0,
   high: 1,
@@ -117,286 +149,558 @@ const statusLabels: Record<TaskStatus, string> = {
   blocked: 'Blocked',
 };
 
+// Submission progress steps
+const submissionSteps: { step: SubmissionStep; label: string; icon: string }[] = [
+  { step: 'validating', label: 'Validating submission...', icon: 'check_circle' },
+  { step: 'saving', label: 'Saving your response...', icon: 'save' },
+  { step: 'attaching', label: 'Attaching file link...', icon: 'attach_file' },
+  { step: 'updating', label: 'Updating task status...', icon: 'sync' },
+  { step: 'notifying', label: 'Notifying manager...', icon: 'notifications' },
+];
+
+// ============================================
+// SKELETON LOADER COMPONENT
+// ============================================
+const TaskCardSkeleton: React.FC = () => (
+  <div className="bg-white rounded-2xl border border-slate-200 p-5 animate-pulse">
+    <div className="flex items-start gap-4">
+      <div className="w-24 h-8 bg-slate-200 rounded-lg"></div>
+      <div className="flex-1 space-y-3">
+        <div className="h-5 bg-slate-200 rounded w-3/4"></div>
+        <div className="h-4 bg-slate-100 rounded w-1/2"></div>
+        <div className="flex gap-2">
+          <div className="h-5 w-16 bg-slate-100 rounded"></div>
+          <div className="h-5 w-20 bg-slate-100 rounded"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+// ============================================
+// SUCCESS ANIMATION COMPONENT
+// ============================================
+interface SuccessOverlayProps {
+  show: boolean;
+  onComplete: () => void;
+  taskTitle: string;
+}
+
+const SuccessOverlay: React.FC<SuccessOverlayProps> = ({ show, onComplete, taskTitle }) => {
+  useEffect(() => {
+    if (show) {
+      const timer = setTimeout(onComplete, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [show, onComplete]);
+
+  if (!show) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fadeIn">
+      <div className="bg-white rounded-3xl p-8 max-w-sm mx-4 text-center shadow-2xl animate-scaleIn">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+          <span className="material-icons text-green-600 text-4xl">check_circle</span>
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">Submission Successful!</h2>
+        <p className="text-slate-600 mb-1">Your work for</p>
+        <p className="text-indigo-600 font-semibold mb-4 truncate">"{taskTitle}"</p>
+        <p className="text-sm text-slate-500">has been submitted to your manager.</p>
+        <div className="mt-6 flex justify-center gap-3">
+          <button
+            onClick={onComplete}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition"
+          >
+            Back to Tasks
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// SUBMISSION PROGRESS OVERLAY
+// ============================================
+interface ProgressOverlayProps {
+  show: boolean;
+  currentStep: SubmissionStep;
+}
+
+const ProgressOverlay: React.FC<ProgressOverlayProps> = ({ show, currentStep }) => {
+  if (!show || currentStep === 'idle' || currentStep === 'complete' || currentStep === 'error') return null;
+
+  const currentIndex = submissionSteps.findIndex(s => s.step === currentStep);
+  
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl p-6 max-w-sm mx-4 shadow-2xl">
+        <div className="flex items-center justify-center mb-4">
+          <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+        </div>
+        <h3 className="text-lg font-semibold text-slate-900 text-center mb-4">Submitting Your Work</h3>
+        <div className="space-y-3">
+          {submissionSteps.map((step, index) => {
+            const isActive = index === currentIndex;
+            const isComplete = index < currentIndex;
+            return (
+              <div key={step.step} className={`flex items-center gap-3 transition-all duration-300 ${
+                isActive ? 'opacity-100' : isComplete ? 'opacity-60' : 'opacity-30'
+              }`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                  isComplete ? 'bg-green-100' : isActive ? 'bg-indigo-100' : 'bg-slate-100'
+                }`}>
+                  {isComplete ? (
+                    <span className="material-icons text-green-600 text-sm">check</span>
+                  ) : isActive ? (
+                    <span className="material-icons text-indigo-600 text-sm animate-pulse">{step.icon}</span>
+                  ) : (
+                    <span className="material-icons text-slate-400 text-sm">{step.icon}</span>
+                  )}
+                </div>
+                <span className={`text-sm ${isActive ? 'text-indigo-700 font-medium' : 'text-slate-600'}`}>
+                  {step.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-slate-400 text-center mt-4">Please don't close this window...</p>
+      </div>
+    </div>
+  );
+};
+
 // ============================================
 // TASK CARD COMPONENT
 // ============================================
 interface TaskCardProps {
   task: Task;
   onStatusChange: (taskId: string, newStatus: TaskStatus) => void;
-  onSubmit: (taskId: string, text: string, file?: FileInfo) => void;
+  onSubmit: (taskId: string, text: string, file?: FileInfo) => Promise<boolean>;
   updating: boolean;
 }
 
 const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, updating }) => {
   const [expanded, setExpanded] = useState(false);
-  const [submissionText, setSubmissionText] = useState('');
   const [showSubmitForm, setShowSubmitForm] = useState(false);
-  const [submitError, setSubmitError] = useState('');
+  const [submissionText, setSubmissionText] = useState('');
   const [driveLink, setDriveLink] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [currentStep, setCurrentStep] = useState<SubmissionStep>('idle');
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [linkValidated, setLinkValidated] = useState(false);
+  const [uploadStep, setUploadStep] = useState<1 | 2>(1);
+  
+  const linkInputRef = useRef<HTMLInputElement>(null);
 
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'completed';
   const hasSubmission = task.submissionText || task.submissionFileUrl;
 
-  // Handle submission
-  const handleSubmit = useCallback(() => {
-    // Text is always required
+  // Validate link on change
+  useEffect(() => {
+    if (driveLink.trim()) {
+      const isValid = isValidDriveLink(driveLink);
+      setLinkValidated(isValid);
+      if (isValid) {
+        setUploadStep(2);
+        setSubmitError('');
+      }
+    } else {
+      setLinkValidated(false);
+    }
+  }, [driveLink]);
+
+  // Handle submission with progress animation
+  const handleSubmit = useCallback(async () => {
+    // Reset error
+    setSubmitError('');
+
+    // Validate text
     if (!submissionText.trim()) {
       setSubmitError('Please provide a text response describing your work');
       return;
     }
 
-    // Check if file is required
-    if (task.requiresFile && !driveLink.trim()) {
-      setSubmitError('This task requires a file link. Please provide your Google Drive link.');
+    // Validate file link if required
+    if (task.requiresFile && !linkValidated) {
+      setSubmitError('This task requires a valid Google Drive link');
       return;
     }
 
-    // Build file info from drive link if provided
-    const fileInfo = driveLink.trim() ? {
+    // Start submission progress
+    setCurrentStep('validating');
+    
+    // Simulate progress steps
+    const progressSteps: SubmissionStep[] = ['validating', 'saving', 'attaching', 'updating', 'notifying'];
+    
+    for (let i = 0; i < progressSteps.length; i++) {
+      setCurrentStep(progressSteps[i]);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // Build file info
+    const fileInfo = driveLink.trim() && linkValidated ? {
       url: driveLink.trim(),
-      name: 'Google Drive File',
+      name: getDriveFileType(driveLink),
       size: 0,
       type: 'link/drive',
     } : undefined;
 
-    onSubmit(task.id, submissionText.trim(), fileInfo);
+    // Submit
+    const success = await onSubmit(task.id, submissionText.trim(), fileInfo);
 
-    // Reset form
+    if (success) {
+      setCurrentStep('complete');
+      setShowSuccess(true);
+    } else {
+      setCurrentStep('error');
+      setSubmitError('Submission failed. Please try again.');
+    }
+  }, [task.id, task.requiresFile, submissionText, driveLink, linkValidated, onSubmit]);
+
+  // Handle success completion
+  const handleSuccessComplete = useCallback(() => {
+    setShowSuccess(false);
+    setCurrentStep('idle');
     setSubmissionText('');
     setDriveLink('');
     setShowSubmitForm(false);
-    setSubmitError('');
-  }, [task.id, task.requiresFile, submissionText, driveLink, onSubmit]);
+    setLinkValidated(false);
+    setUploadStep(1);
+  }, []);
+
+  // Remove linked file
+  const removeLinkedFile = useCallback(() => {
+    setDriveLink('');
+    setLinkValidated(false);
+    setUploadStep(1);
+  }, []);
 
   return (
-    <div className={`bg-white rounded-2xl border shadow-sm transition-all ${
-      isOverdue ? 'border-rose-200' : hasSubmission ? 'border-green-200' : 'border-slate-200'
-    } ${expanded ? 'ring-2 ring-indigo-100' : ''}`}>
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-4 flex-1 min-w-0">
-            {/* Status dropdown */}
-            <select
-              value={task.status}
-              onChange={(e) => onStatusChange(task.id, e.target.value as TaskStatus)}
-              disabled={updating || task.status === 'completed'}
-              className={`appearance-none w-32 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${statusColors[task.status]} ${
-                updating ? 'opacity-50 cursor-wait' : ''
-              }`}
-            >
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="blocked">Blocked</option>
-            </select>
-
-            {/* Task content */}
-            <div className="flex-1 min-w-0">
-              <h3 className={`font-semibold text-slate-900 ${task.status === 'completed' ? 'line-through text-slate-400' : ''}`}>
-                {task.title}
-              </h3>
-              
-              {task.description && (
-                <p className="text-sm text-slate-500 mt-1 line-clamp-2">{task.description}</p>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3 mt-3">
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${priorityColors[task.priority]}`}>
-                  {task.priority}
-                </span>
-
-                {task.dueDate && (
-                  <span className={`text-xs flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
-                    <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'event'}</span>
-                    {formatDate(task.dueDate)}
-                  </span>
-                )}
-
-                {task.requiresFile && (
-                  <span className="text-xs flex items-center gap-1 text-orange-600">
-                    <span className="material-icons text-[14px]">attach_file</span>
-                    File required
-                  </span>
-                )}
-
-                {task.creatorName && (
-                  <span className="text-xs text-slate-400">
-                    From: {task.creatorName}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            {!hasSubmission && task.status !== 'completed' && (
-              <button
-                onClick={() => setShowSubmitForm(!showSubmitForm)}
-                className="px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-sm font-medium transition"
+    <>
+      <SuccessOverlay show={showSuccess} onComplete={handleSuccessComplete} taskTitle={task.title} />
+      <ProgressOverlay show={currentStep !== 'idle' && currentStep !== 'complete' && currentStep !== 'error'} currentStep={currentStep} />
+      
+      <div className={`bg-white rounded-2xl border shadow-sm transition-all duration-300 ${
+        isOverdue ? 'border-rose-200' : hasSubmission ? 'border-green-200' : 'border-slate-200'
+      } ${expanded ? 'ring-2 ring-indigo-100' : ''} hover:shadow-md`}>
+        <div className="p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4 flex-1 min-w-0">
+              {/* Status dropdown */}
+              <select
+                value={task.status}
+                onChange={(e) => onStatusChange(task.id, e.target.value as TaskStatus)}
+                disabled={updating || task.status === 'completed'}
+                className={`appearance-none w-32 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all ${statusColors[task.status]} ${
+                  updating ? 'opacity-50 cursor-wait' : 'hover:opacity-80'
+                }`}
               >
-                Submit Work
-              </button>
-            )}
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition"
-            >
-              <span className="material-icons text-[20px]">
-                {expanded ? 'expand_less' : 'expand_more'}
-              </span>
-            </button>
-          </div>
-        </div>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+                <option value="blocked">Blocked</option>
+              </select>
 
-        {/* Existing submission */}
-        {hasSubmission && (
-          <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="material-icons text-green-600 text-sm">check_circle</span>
-              <span className="text-sm font-semibold text-green-700">Your Submission</span>
-            </div>
-            {task.submissionText && (
-              <p className="text-sm text-green-800">{task.submissionText}</p>
-            )}
-            {task.submissionFileUrl && (
-              <div className="mt-2 flex items-center gap-2 flex-wrap">
-                <span className="material-icons text-green-600">{getFileIcon(task.submissionFileName || '')}</span>
-                <span className="text-sm text-green-700 flex-1 truncate">{task.submissionFileName || 'Attachment'}</span>
+              {/* Task content */}
+              <div className="flex-1 min-w-0">
+                <h3 className={`font-semibold text-slate-900 ${task.status === 'completed' ? 'line-through text-slate-400' : ''}`}>
+                  {task.title}
+                </h3>
                 
-                {/* Preview button for PDF/TXT */}
-                {canPreviewFile(task.submissionFileName || '') && task.submissionFileUrl && (
-                  <button
-                    onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', false)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-medium rounded-lg transition"
-                  >
-                    <span className="material-icons text-sm">visibility</span>
-                    Preview
-                  </button>
+                {task.description && (
+                  <p className="text-sm text-slate-500 mt-1 line-clamp-2">{task.description}</p>
                 )}
-                
-                {/* Download button for all files */}
-                {task.submissionFileUrl && (
-                  <button
-                    onClick={() => openFile(task.submissionFileUrl!, task.submissionFileName || 'file', true)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 text-sm font-medium rounded-lg transition"
-                  >
-                    <span className="material-icons text-sm">download</span>
-                    Download
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
 
-        {/* Submit form */}
-        {showSubmitForm && !hasSubmission && (
-          <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-            <h4 className="text-sm font-semibold text-slate-700 mb-3">Submit Your Work</h4>
-            
-            {submitError && (
-              <div className="mb-3 p-3 bg-red-50 border border-red-100 rounded-lg">
-                <p className="text-sm text-red-700">{submitError}</p>
-              </div>
-            )}
+                <div className="flex flex-wrap items-center gap-3 mt-3">
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${priorityColors[task.priority]}`}>
+                    {task.priority}
+                  </span>
 
-            {/* Text response - always required */}
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                Response <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                value={submissionText}
-                onChange={(e) => setSubmissionText(e.target.value)}
-                placeholder="Describe what you've done, provide links, or explain your solution..."
-                rows={3}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-              />
-            </div>
+                  {task.dueDate && (
+                    <span className={`text-xs flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
+                      <span className="material-icons text-[14px]">{isOverdue ? 'warning' : 'event'}</span>
+                      {formatDate(task.dueDate)}
+                    </span>
+                  )}
 
-            {/* File/Link section */}
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-slate-600 mb-1">
-                Google Drive Link {task.requiresFile ? <span className="text-red-500">*</span> : '(optional)'}
-              </label>
-              
-              <div className="space-y-2">
-                <input
-                  type="url"
-                  value={driveLink}
-                  onChange={(e) => setDriveLink(e.target.value)}
-                  placeholder="Paste your Google Drive file link here..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-                <div className="flex items-center gap-2">
-                  <a
-                    href="https://drive.google.com/drive/folders/13lIjU4zmd8rolBJd036UIiwUEDN253TY"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1"
-                  >
-                    <span className="material-icons text-sm">open_in_new</span>
-                    Upload to Google Drive
-                  </a>
-                  <span className="text-xs text-slate-400">• Then paste the share link above</span>
+                  {task.requiresFile && (
+                    <span className="text-xs flex items-center gap-1 text-orange-600">
+                      <span className="material-icons text-[14px]">attach_file</span>
+                      File required
+                    </span>
+                  )}
+
+                  {task.creatorName && (
+                    <span className="text-xs text-slate-400">
+                      From: {task.creatorName}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Submit button */}
-            <div className="flex gap-2">
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              {!hasSubmission && task.status !== 'completed' && (
+                <button
+                  onClick={() => setShowSubmitForm(!showSubmitForm)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    showSubmitForm 
+                      ? 'bg-indigo-600 text-white' 
+                      : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                  }`}
+                >
+                  Submit Work
+                </button>
+              )}
               <button
-                onClick={handleSubmit}
-                disabled={updating || !submissionText.trim() || (task.requiresFile && !driveLink.trim())}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition flex items-center justify-center gap-2"
+                onClick={() => setExpanded(!expanded)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition"
               >
-                {updating ? (
-                  <>
-                    <span className="animate-spin material-icons text-sm">hourglass_empty</span>
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <span className="material-icons text-sm">send</span>
-                    Submit
-                  </>
+                <span className="material-icons text-[20px] transition-transform duration-200" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                  expand_more
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Existing submission display */}
+          {hasSubmission && (
+            <div className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl animate-fadeIn">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="material-icons text-green-600 text-sm">check_circle</span>
+                <span className="text-sm font-semibold text-green-700">Your Submission</span>
+                {task.submittedAt && (
+                  <span className="text-xs text-green-600 ml-auto">
+                    Submitted {formatDate(task.submittedAt)}
+                  </span>
                 )}
-              </button>
-              <button
-                onClick={() => {
-                  setShowSubmitForm(false);
-                  setSubmissionText('');
-                  setDriveLink('');
-                  setSubmitError('');
-                }}
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition"
-              >
-                Cancel
-              </button>
+              </div>
+              {task.submissionText && (
+                <p className="text-sm text-green-800">{task.submissionText}</p>
+              )}
+              {task.submissionFileUrl && (
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-white border border-green-200 rounded-lg">
+                    <span className="material-icons text-green-600">{getDriveFileIcon(task.submissionFileUrl)}</span>
+                    <span className="text-sm text-green-700 font-medium">{task.submissionFileName || 'Google Drive File'}</span>
+                  </div>
+                  <a
+                    href={task.submissionFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
+                  >
+                    <span className="material-icons text-sm">open_in_new</span>
+                    Open in Drive
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Submit form - Guided flow */}
+          {showSubmitForm && !hasSubmission && (
+            <div className="mt-4 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 animate-slideDown">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
+                  <span className="material-icons text-indigo-600 text-lg">assignment_turned_in</span>
+                </div>
+                <h4 className="text-base font-semibold text-slate-800">Submit Your Work</h4>
+              </div>
+              
+              {/* Error message */}
+              {submitError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2 animate-shake">
+                  <span className="material-icons text-red-500 text-sm mt-0.5">error</span>
+                  <p className="text-sm text-red-700">{submitError}</p>
+                </div>
+              )}
+
+              {/* Step 1: Text response */}
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-5 h-5 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">1</div>
+                  <label className="text-sm font-medium text-slate-700">
+                    Describe your work <span className="text-red-500">*</span>
+                  </label>
+                </div>
+                <textarea
+                  value={submissionText}
+                  onChange={(e) => setSubmissionText(e.target.value)}
+                  placeholder="Explain what you've done, share relevant details, or describe your solution..."
+                  rows={3}
+                  disabled={currentStep !== 'idle' && currentStep !== 'error'}
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+
+              {/* Step 2: Google Drive link */}
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-5 h-5 text-xs font-bold rounded-full flex items-center justify-center ${
+                    task.requiresFile ? 'bg-indigo-600 text-white' : 'bg-slate-300 text-slate-600'
+                  }`}>2</div>
+                  <label className="text-sm font-medium text-slate-700">
+                    Attach file from Google Drive {task.requiresFile ? <span className="text-red-500">*</span> : <span className="text-slate-400">(optional)</span>}
+                  </label>
+                </div>
+
+                {!linkValidated ? (
+                  <div className="space-y-3">
+                    {/* Step indicator */}
+                    <div className="flex items-center gap-4 p-3 bg-white rounded-lg border border-slate-200">
+                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 1 ? 'opacity-100' : 'opacity-40'}`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                          uploadStep === 1 ? 'bg-indigo-600 text-white' : 'bg-green-500 text-white'
+                        }`}>
+                          {uploadStep > 1 ? '✓' : 'A'}
+                        </div>
+                        <span className="text-xs text-slate-600">Upload to Drive</span>
+                      </div>
+                      <div className="flex-1 h-px bg-slate-200"></div>
+                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 2 ? 'opacity-100' : 'opacity-40'}`}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                          uploadStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
+                        }`}>B</div>
+                        <span className="text-xs text-slate-600">Paste link</span>
+                      </div>
+                    </div>
+
+                    {/* Upload button */}
+                    <a
+                      href={GOOGLE_DRIVE_FOLDER}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-blue-50 border-2 border-dashed border-blue-300 hover:border-blue-400 rounded-xl transition-all group"
+                    >
+                      <img src="https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" alt="Drive" className="w-6 h-6" />
+                      <span className="text-sm font-medium text-blue-700 group-hover:text-blue-800">
+                        Upload your file to Google Drive
+                      </span>
+                      <span className="material-icons text-blue-400 text-sm">open_in_new</span>
+                    </a>
+
+                    {/* Link input */}
+                    <div className="relative">
+                      <input
+                        ref={linkInputRef}
+                        type="url"
+                        value={driveLink}
+                        onChange={(e) => setDriveLink(e.target.value)}
+                        placeholder="After uploading, paste your Google Drive share link here..."
+                        disabled={currentStep !== 'idle' && currentStep !== 'error'}
+                        className={`w-full px-4 py-3 pr-10 border rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                          driveLink && !linkValidated 
+                            ? 'border-amber-300 focus:ring-amber-500 focus:border-amber-500' 
+                            : 'border-slate-200 focus:ring-indigo-500 focus:border-indigo-500'
+                        }`}
+                      />
+                      {driveLink && !linkValidated && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          <span className="material-icons text-amber-500 text-sm">warning</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {driveLink && !linkValidated && (
+                      <p className="text-xs text-amber-600 flex items-center gap-1">
+                        <span className="material-icons text-xs">info</span>
+                        Please enter a valid Google Drive link (e.g., drive.google.com/file/d/...)
+                      </p>
+                    )}
+
+                    <p className="text-xs text-slate-500">
+                      💡 Tip: After uploading, right-click your file → Share → Copy link
+                    </p>
+                  </div>
+                ) : (
+                  /* Link validated - show success state */
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl animate-fadeIn">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                        <span className="material-icons text-green-600">{getDriveFileIcon(driveLink)}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-green-800">{getDriveFileType(driveLink)}</span>
+                          <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full">LINKED</span>
+                        </div>
+                        <p className="text-xs text-green-600 truncate mt-0.5">{driveLink}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <a
+                          href={driveLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"
+                          title="Preview"
+                        >
+                          <span className="material-icons text-sm">visibility</span>
+                        </a>
+                        <button
+                          onClick={removeLinkedFile}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                          title="Remove"
+                        >
+                          <span className="material-icons text-sm">close</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Submit actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleSubmit}
+                  disabled={currentStep !== 'idle' && currentStep !== 'error' || !submissionText.trim() || (task.requiresFile && !linkValidated)}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:from-indigo-300 disabled:to-indigo-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 disabled:shadow-none"
+                >
+                  <span className="material-icons text-sm">send</span>
+                  Submit Work
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSubmitForm(false);
+                    setSubmissionText('');
+                    setDriveLink('');
+                    setSubmitError('');
+                    setLinkValidated(false);
+                    setUploadStep(1);
+                  }}
+                  disabled={currentStep !== 'idle' && currentStep !== 'error'}
+                  className="px-4 py-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-medium rounded-xl transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Expanded details */}
+        {expanded && (
+          <div className="px-5 pb-5 border-t border-slate-100 animate-fadeIn">
+            <div className="mt-4 space-y-2">
+              {task.meetingTitle && (
+                <p className="text-sm text-slate-600">
+                  <span className="font-medium">Meeting:</span> {task.meetingTitle}
+                </p>
+              )}
+              {task.createdAt && (
+                <p className="text-sm text-slate-500">
+                  <span className="font-medium">Assigned:</span> {formatDate(task.createdAt)}
+                </p>
+              )}
             </div>
           </div>
         )}
       </div>
-
-      {/* Expanded details */}
-      {expanded && (
-        <div className="px-5 pb-5 border-t border-slate-100">
-          <div className="mt-4 space-y-2">
-            {task.meetingTitle && (
-              <p className="text-sm text-slate-600">
-                <span className="font-medium">Meeting:</span> {task.meetingTitle}
-              </p>
-            )}
-            {task.createdAt && (
-              <p className="text-sm text-slate-500">
-                <span className="font-medium">Assigned:</span> {formatDate(task.createdAt)}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 
@@ -404,7 +708,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 // MAIN COMPONENT
 // ============================================
 const TasksPage: React.FC = () => {
-  const { user, isEmployee, isManager, loading: authLoading } = useAuth();
+  const { user, isManager, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -425,20 +729,17 @@ const TasksPage: React.FC = () => {
   // Fetch tasks assigned to current employee
   useEffect(() => {
     if (authLoading || !user) {
-      console.log('[TasksPage] Skipping - authLoading:', authLoading, 'user:', !!user);
       return;
     }
 
     const mtaiId = user.mtaiId;
     
     if (!mtaiId) {
-      console.log('[TasksPage] No MTAI ID found for user');
       setTasks([]);
       setLoading(false);
       return;
     }
 
-    console.log('[TasksPage] Setting up task listener for assignedTo:', mtaiId);
     setLoading(true);
 
     const tasksQuery = query(
@@ -449,11 +750,9 @@ const TasksPage: React.FC = () => {
     const unsubscribe = onSnapshot(
       tasksQuery,
       (snapshot) => {
-        console.log('[TasksPage] Tasks snapshot received, count:', snapshot.size);
         const tasksData: Task[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
-          console.log('[TasksPage] Task found:', doc.id, 'assignedTo:', data.assignedTo);
           tasksData.push({
             id: doc.id,
             meetingId: data.meetingId,
@@ -478,7 +777,6 @@ const TasksPage: React.FC = () => {
         // Sort by priority
         tasksData.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-        console.log('[TasksPage] Setting tasks state, count:', tasksData.length);
         setTasks(tasksData);
         setLoading(false);
       },
@@ -524,8 +822,8 @@ const TasksPage: React.FC = () => {
     }
   }, []);
 
-  // Handle submission
-  const handleSubmit = useCallback(async (taskId: string, text: string, file?: FileInfo) => {
+  // Handle submission - returns success boolean
+  const handleSubmit = useCallback(async (taskId: string, text: string, file?: FileInfo): Promise<boolean> => {
     setUpdating(true);
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -552,11 +850,11 @@ const TasksPage: React.FC = () => {
         throw new Error(error.error || 'Failed to submit');
       }
       
-      // Show success (task list will update via real-time listener)
-      console.log('[TasksPage] Task submitted successfully');
+      return true;
     } catch (err: any) {
       console.error('[TasksPage] Submit error:', err);
       setError(err.message);
+      return false;
     } finally {
       setUpdating(false);
     }
@@ -579,11 +877,27 @@ const TasksPage: React.FC = () => {
     completed: tasks.filter(t => t.status === 'completed').length,
   };
 
-  // Loading state
+  // Loading state with skeletons
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">My Tasks</h1>
+          <p className="text-slate-500 mt-1">Tasks assigned to you by managers</p>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 animate-pulse">
+              <div className="h-8 w-8 bg-slate-200 rounded mb-2"></div>
+              <div className="h-4 w-16 bg-slate-100 rounded"></div>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <TaskCardSkeleton key={i} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -598,15 +912,15 @@ const TasksPage: React.FC = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
           <p className="text-2xl font-bold text-amber-600">{stats.pending}</p>
           <p className="text-sm text-slate-500">Pending</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
           <p className="text-2xl font-bold text-blue-600">{stats.inProgress}</p>
           <p className="text-sm text-slate-500">In Progress</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
           <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
           <p className="text-sm text-slate-500">Completed</p>
         </div>
@@ -637,16 +951,19 @@ const TasksPage: React.FC = () => {
             placeholder="Search tasks..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm w-48 focus:ring-2 focus:ring-indigo-500"
+            className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm w-48 focus:ring-2 focus:ring-indigo-500 transition-all"
           />
         </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)}>
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center justify-between animate-shake">
+          <div className="flex items-center gap-2">
+            <span className="material-icons text-red-500">error</span>
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError(null)} className="p-1 hover:bg-red-100 rounded-lg transition">
             <span className="material-icons">close</span>
           </button>
         </div>
@@ -667,17 +984,55 @@ const TasksPage: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredTasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onStatusChange={handleStatusChange}
-              onSubmit={handleSubmit}
-              updating={updating}
-            />
+          {filteredTasks.map((task, index) => (
+            <div 
+              key={task.id} 
+              className="animate-fadeIn"
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
+              <TaskCard
+                task={task}
+                onStatusChange={handleStatusChange}
+                onSubmit={handleSubmit}
+                updating={updating}
+              />
+            </div>
           ))}
         </div>
       )}
+
+      {/* CSS Animations */}
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.9); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes slideDown {
+          from { opacity: 0; max-height: 0; }
+          to { opacity: 1; max-height: 1000px; }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-5px); }
+          75% { transform: translateX(5px); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.3s ease-out forwards;
+        }
+        .animate-scaleIn {
+          animation: scaleIn 0.3s ease-out forwards;
+        }
+        .animate-slideDown {
+          animation: slideDown 0.3s ease-out forwards;
+        }
+        .animate-shake {
+          animation: shake 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 };
