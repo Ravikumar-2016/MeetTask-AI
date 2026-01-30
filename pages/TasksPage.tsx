@@ -25,7 +25,7 @@ import { useAuth } from '../contexts/AuthContext';
 // ============================================
 // CONSTANTS
 // ============================================
-const GOOGLE_DRIVE_FOLDER = 'https://drive.google.com/drive/folders/13lIjU4zmd8rolBJd036UIiwUEDN253TY';
+const GOOGLE_DRIVE_URL = 'https://drive.google.com';
 
 // ============================================
 // TYPES
@@ -290,7 +290,8 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
   const [currentStep, setCurrentStep] = useState<SubmissionStep>('idle');
   const [showSuccess, setShowSuccess] = useState(false);
   const [linkValidated, setLinkValidated] = useState(false);
-  const [uploadStep, setUploadStep] = useState<1 | 2>(1);
+  const [uploadStep, setUploadStep] = useState<1 | 2 | 3>(1);
+  const [viewerConfirmed, setViewerConfirmed] = useState(false);
   
   const linkInputRef = useRef<HTMLInputElement>(null);
 
@@ -325,6 +326,12 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     // Validate file link if required
     if (task.requiresFile && !linkValidated) {
       setSubmitError('This task requires a valid Google Drive link');
+      return;
+    }
+
+    // Validate viewer confirmation if file is attached
+    if (linkValidated && !viewerConfirmed) {
+      setSubmitError('Please confirm you have shared the file as Viewer');
       return;
     }
 
@@ -367,6 +374,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
     setDriveLink('');
     setShowSubmitForm(false);
     setLinkValidated(false);
+    setViewerConfirmed(false);
     setUploadStep(1);
   }, []);
 
@@ -374,6 +382,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
   const removeLinkedFile = useCallback(() => {
     setDriveLink('');
     setLinkValidated(false);
+    setViewerConfirmed(false);
     setUploadStep(1);
   }, []);
 
@@ -550,35 +559,48 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
 
                 {!linkValidated ? (
                   <div className="space-y-3">
+                    {/* Instructions box */}
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800 font-medium mb-1">📁 Upload to YOUR OWN Google Drive</p>
+                      <p className="text-xs text-blue-700">Share the file as <span className="font-semibold">"Viewer"</span> and paste the link below.</p>
+                    </div>
+
                     {/* Step indicator */}
-                    <div className="flex items-center gap-4 p-3 bg-white rounded-lg border border-slate-200">
+                    <div className="flex items-center gap-2 p-3 bg-white rounded-lg border border-slate-200">
                       <div className={`flex items-center gap-2 transition-all ${uploadStep === 1 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                          uploadStep === 1 ? 'bg-indigo-600 text-white' : 'bg-green-500 text-white'
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                          uploadStep > 1 ? 'bg-green-500 text-white' : 'bg-indigo-600 text-white'
                         }`}>
-                          {uploadStep > 1 ? '✓' : 'A'}
+                          {uploadStep > 1 ? '✓' : '1'}
                         </div>
-                        <span className="text-xs text-slate-600">Upload to Drive</span>
+                        <span className="text-xs text-slate-600">Upload</span>
                       </div>
                       <div className="flex-1 h-px bg-slate-200"></div>
                       <div className={`flex items-center gap-2 transition-all ${uploadStep === 2 ? 'opacity-100' : 'opacity-40'}`}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                          uploadStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
-                        }`}>B</div>
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                          uploadStep > 2 ? 'bg-green-500 text-white' : uploadStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
+                        }`}>{uploadStep > 2 ? '✓' : '2'}</div>
+                        <span className="text-xs text-slate-600">Share as Viewer</span>
+                      </div>
+                      <div className="flex-1 h-px bg-slate-200"></div>
+                      <div className={`flex items-center gap-2 transition-all ${uploadStep === 3 ? 'opacity-100' : 'opacity-40'}`}>
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                          uploadStep === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
+                        }`}>3</div>
                         <span className="text-xs text-slate-600">Paste link</span>
                       </div>
                     </div>
 
                     {/* Upload button */}
                     <a
-                      href={GOOGLE_DRIVE_FOLDER}
+                      href={GOOGLE_DRIVE_URL}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-blue-50 border-2 border-dashed border-blue-300 hover:border-blue-400 rounded-xl transition-all group"
                     >
                       <img src="https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png" alt="Drive" className="w-6 h-6" />
                       <span className="text-sm font-medium text-blue-700 group-hover:text-blue-800">
-                        Upload your file to Google Drive
+                        Open Google Drive (upload to your account)
                       </span>
                       <span className="material-icons text-blue-400 text-sm">open_in_new</span>
                     </a>
@@ -590,7 +612,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                         type="url"
                         value={driveLink}
                         onChange={(e) => setDriveLink(e.target.value)}
-                        placeholder="After uploading, paste your Google Drive share link here..."
+                        placeholder="Paste your shared Google Drive link here..."
                         disabled={currentStep !== 'idle' && currentStep !== 'error'}
                         className={`w-full px-4 py-3 pr-10 border rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                           driveLink && !linkValidated 
@@ -612,43 +634,72 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                       </p>
                     )}
 
-                    <p className="text-xs text-slate-500">
-                      💡 Tip: After uploading, right-click your file → Share → Copy link
-                    </p>
+                    <div className="text-xs text-slate-500 space-y-1">
+                      <p className="font-medium">💡 How to share:</p>
+                      <p>1. Upload file to your Drive → Right-click → Share</p>
+                      <p>2. Change access to <span className="font-semibold">"Anyone with the link"</span> → <span className="font-semibold">Viewer</span></p>
+                      <p>3. Click "Copy link" and paste above</p>
+                    </div>
                   </div>
                 ) : (
-                  /* Link validated - show success state */
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl animate-fadeIn">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                        <span className="material-icons text-green-600">{getDriveFileIcon(driveLink)}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-green-800">{getDriveFileType(driveLink)}</span>
-                          <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full">LINKED</span>
+                  /* Link validated - show success state with viewer confirmation */
+                  <div className="space-y-3 animate-fadeIn">
+                    <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                          <span className="material-icons text-green-600">{getDriveFileIcon(driveLink)}</span>
                         </div>
-                        <p className="text-xs text-green-600 truncate mt-0.5">{driveLink}</p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <a
-                          href={driveLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"
-                          title="Preview"
-                        >
-                          <span className="material-icons text-sm">visibility</span>
-                        </a>
-                        <button
-                          onClick={removeLinkedFile}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
-                          title="Remove"
-                        >
-                          <span className="material-icons text-sm">close</span>
-                        </button>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-green-800">{getDriveFileType(driveLink)}</span>
+                            <span className="px-2 py-0.5 bg-green-600 text-white text-[10px] font-bold rounded-full">LINKED</span>
+                          </div>
+                          <p className="text-xs text-green-600 truncate mt-0.5">{driveLink}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <a
+                            href={driveLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"
+                            title="Preview"
+                          >
+                            <span className="material-icons text-sm">visibility</span>
+                          </a>
+                          <button
+                            onClick={removeLinkedFile}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                            title="Remove"
+                          >
+                            <span className="material-icons text-sm">close</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
+
+                    {/* Viewer confirmation checkbox */}
+                    <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                      viewerConfirmed 
+                        ? 'bg-green-50 border-green-300' 
+                        : 'bg-amber-50 border-amber-300 hover:border-amber-400'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={viewerConfirmed}
+                        onChange={(e) => setViewerConfirmed(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 text-green-600 border-slate-300 rounded focus:ring-green-500"
+                      />
+                      <div>
+                        <p className={`text-sm font-medium ${
+                          viewerConfirmed ? 'text-green-700' : 'text-amber-700'
+                        }`}>
+                          {viewerConfirmed ? '✓ ' : ''}I have shared this file as "Viewer"
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Your manager will have read-only access to view/download the file.
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 )}
               </div>
@@ -657,7 +708,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={handleSubmit}
-                  disabled={currentStep !== 'idle' && currentStep !== 'error' || !submissionText.trim() || (task.requiresFile && !linkValidated)}
+                  disabled={(currentStep !== 'idle' && currentStep !== 'error') || !submissionText.trim() || (task.requiresFile && !linkValidated) || (linkValidated && !viewerConfirmed)}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:from-indigo-300 disabled:to-indigo-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 disabled:shadow-none"
                 >
                   <span className="material-icons text-sm">send</span>
@@ -670,6 +721,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onStatusChange, onSubmit, upd
                     setDriveLink('');
                     setSubmitError('');
                     setLinkValidated(false);
+                    setViewerConfirmed(false);
                     setUploadStep(1);
                   }}
                   disabled={currentStep !== 'idle' && currentStep !== 'error'}
