@@ -23,5 +23,33 @@ dist-ssr
 *.sln
 *.sw?
 
-#environment files
+# Windows system files
+desktop.ini
+Thumbs.db
+ehthumbs.db
+
+# Environment files
+.env
+.env.local
 .env.*.local
+*.env
+
+# Firebase Admin SDK credentials (NEVER commit these!)
+*-firebase-adminsdk*.json
+firebase-adminsdk*.json
+serviceAccountKey.json
+
+# Build outputs
+build/
+.vercel
+
+# IDE
+*.iml
+.project
+.classpath
+.settings/
+
+# OS files
+*.DS_Store
+.AppleDouble
+.LSOverride
