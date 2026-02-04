@@ -12,24 +12,6 @@ MeetTask AI is a full-stack web application that streamlines the meeting-to-task
 
 ---
 
-## 📋 Table of Contents
-
-- [Overview](#-overview)
-- [Key Features](#-key-features)
-- [Tech Stack](#-tech-stack)
-- [System Architecture](#-system-architecture)
-- [Project Structure](#-project-structure)
-- [User Workflows](#-user-workflows)
-- [API Endpoints](#-api-endpoints)
-- [Database Schema](#-database-schema)
-- [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
-- [Deployment](#-deployment)
-- [Security](#-security)
-- [License](#-license)
-
----
-
 ## 🎯 Overview
 
 MeetTask AI solves the common problem of action items getting lost after meetings. It provides:
