@@ -10,12 +10,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@vercel/node": "^5.0.0",
     "axios": "^1.13.4",
     "firebase": "^12.8.0",
     "firebase-admin": "^13.6.0",
-    "openai": "^6.17.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.0",
